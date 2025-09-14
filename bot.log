@@ -1,0 +1,13 @@
+2025-05-03 01:26:30,388 [INFO] Bot is starting...
+2025-05-03 01:26:30,388 [INFO] Start polling
+2025-05-03 01:26:31,071 [INFO] Run polling for bot @r145j7_system_bot id=8045284727 - 'R145j7 SYSTEM bot'
+2025-05-03 01:26:31,555 [INFO] Update id=342690243 is handled. Duration 366 ms by bot id=8045284727
+2025-05-03 01:26:50,168 [INFO] Update id=342690244 is handled. Duration 135 ms by bot id=8045284727
+2025-05-03 01:27:11,878 [INFO] Update id=342690245 is handled. Duration 395 ms by bot id=8045284727
+2025-05-03 01:27:28,838 [WARNING] Received SIGINT signal
+2025-05-03 01:27:28,839 [INFO] Polling stopped for bot @r145j7_system_bot id=8045284727 - 'R145j7 SYSTEM bot'
+2025-05-03 01:27:28,839 [INFO] Polling stopped
+2025-05-03 01:27:29,091 [INFO] Bot stopped.
+2025-05-03 01:29:25,431 [INFO] Bot is starting...
+2025-05-03 01:29:42,728 [WARNING] Received SIGINT signal
+2025-05-03 01:29:42,981 [INFO] Bot stopped.
