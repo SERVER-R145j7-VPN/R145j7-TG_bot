@@ -56,7 +56,7 @@ SERVERS = [
         },
         "processes": {
             "url": "/processes",
-            "required": ["fail2ban", "global-bot", "global-hook-listener", "mysql", "nginx", "server_monitoring", "telegram-bot", "webhook-handler"],
+            "required": ["fail2ban", "global-bot", "global-hook-listener", "mysql", "nginx", "server_monitoring", "webhook-handler"],
             "interval": 300
         },
         "updates": {
