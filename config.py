@@ -1,12 +1,13 @@
-BOT_TOKEN = "8045284727:AAEndqxBJLhfcPlefAUuySDmwuLdxgn1ElU" # R145j7_TG-bot
-# BOT_TOKEN = "7913584298:AAGECC-CRqI2XqTC9hpNOXQ3Fcn2H4A8O3o" # DEV bot
+# BOT_TOKEN = "8045284727:AAEndqxBJLhfcPlefAUuySDmwuLdxgn1ElU" # R145j7_TG-bot
+BOT_TOKEN = "7913584298:AAGECC-CRqI2XqTC9hpNOXQ3Fcn2H4A8O3o" # DEV bot
 TG_ID = 199310090
 
 # Массив серверов с полным описанием
 SERVERS = [
     {
         "name": "R145j7 VPN",
-        "type": "local",
+        "base_url": "http://127.0.0.1:58423",
+        "token": "pk6lbA61zHmBK6%lJeE6ldUox6GLHo$6",
         "cpu_ram": {
             "cpu_high": 50,
             "cpu_low": 30,
@@ -22,23 +23,21 @@ SERVERS = [
             "threshold": 90,
             "interval": 3600
         },
-        "processes": {
-            "enabled": True,
-            "required": ["mysql"],
+        "processes_systemctl": {
+            "interval": 300
+        },
+        "processes_pm2": {
             "interval": 300
         },
         "updates": {
-            "enabled": True,
             "time": "07:00"
         }
     },
     {
         "name": "UDH SERVER",
-        "type": "remote",
         "base_url": "http://83.229.84.192:58423",
         "token": "aZ7@Lp9Vd6qW2!mN4r$X8hJzC1e%KtY",
         "cpu_ram": {
-            "url": "/cpu_ram",
             "cpu_high": 50,
             "cpu_low": 30,
             "ram_high": 90,
@@ -50,27 +49,24 @@ SERVERS = [
             }
         },
         "disk": {
-            "url": "/disk",
             "threshold": 90,
             "interval": 3600
         },
-        "processes": {
-            "url": "/processes",
-            "required": ["fail2ban", "global-bot", "global-hook-listener", "mysql", "nginx", "server_monitoring", "webhook-handler"],
+        "processes_systemctl": {
+            "interval": 300
+        },
+        "processes_pm2": {
             "interval": 300
         },
         "updates": {
-            "url": "/updates",
             "time": "07:00"
         }
     },
     {
         "name": "KOVAL VDS",
-        "type": "remote",
         "base_url": "http://157.90.105.110:58423",
         "token": "Bw8!Ns4vKq!L2@tX7r$M9dFyZ3h%GpVc",
         "cpu_ram": {
-            "url": "/cpu_ram",
             "cpu_high": 50,
             "cpu_low": 30,
             "ram_high": 90,
@@ -82,27 +78,24 @@ SERVERS = [
             }
         },
         "disk": {
-            "url": "/disk",
             "threshold": 90,
             "interval": 3600
         },
-        "processes": {
-            "url": "/processes",
-            "required": ["mariadb", "apache2", "fail2ban", "nginx", "server_monitoring"],
+        "processes_systemctl": {
+            "interval": 300
+        },
+        "processes_pm2": {
             "interval": 300
         },
         "updates": {
-            "url": "/updates",
             "time": "07:00"
         }
     },
     {
         "name": "AP SERVER",
-        "type": "remote",
         "base_url": "http://185.139.230.208:58423",
         "token": "G7rLp2Vz6qMn9Y4XtHwJc3eBkT8",
         "cpu_ram": {
-            "url": "/cpu_ram",
             "cpu_high": 50,
             "cpu_low": 30,
             "ram_high": 80,
@@ -114,17 +107,16 @@ SERVERS = [
             }
         },
         "disk": {
-            "url": "/disk",
             "threshold": 90,
             "interval": 3600
         },
-        "processes": {
-            "url": "/processes",
-            "required": ["fail2ban", "mysql", "nginx", "server_monitoring"],
+        "processes_systemctl": {
+            "interval": 300
+        },
+        "processes_pm2": {
             "interval": 300
         },
         "updates": {
-            "url": "/updates",
             "time": "07:00"
         }
     }
