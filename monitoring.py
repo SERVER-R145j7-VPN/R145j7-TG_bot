@@ -1,3 +1,24 @@
+"""
+• Логгер для каждого сервера
+  - Отдельный лог-файл на сервер, ротация ежедневно, хранение 7 дней.
+
+• Список серверов в файле конфига
+  - Имя сервера, base_url, токен, пороги CPU/RAM, пороги по диску, расписание обновлений.
+
+• Запросы данных с серверов по АПИ
+  - /cpu_ram             → загрузка CPU и RAM, load average
+  - /disk                → заполнение диска
+  - /processes_systemctl → статус системных сервисов
+  - /processes_pm2       → статус процессов pm2
+  - /updates             → наличие системных обновлений
+  - /backup_json         → отчёт о выполнении бэкапов
+
+• Контроль майнеров
+  - Поиск подозрительных процессов (через локальный psutil или remote /processes_*).
+
+• Мониторинг сайтов
+  - Проверка списка URL, уведомления при падении и восстановлении.
+"""
 import psutil
 import asyncio
 import aiohttp
@@ -11,6 +32,7 @@ import ssl
 import logging
 from logging.handlers import TimedRotatingFileHandler
 
+# ===== Логгер ===== 
 def get_server_logger(name):
     os.makedirs("logs/monitoring", exist_ok=True)
     logger = logging.getLogger(f"monitoring.{name}")
@@ -32,11 +54,11 @@ def get_server_logger(name):
 
 bot = Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode="MarkdownV2"))
 
-# Правка сообщений для Телеграм
+# ===== Правка сообщений для Телеграм =====
 def escape_markdown(text: str) -> str:
     return re.sub(r'([_*[\]()~`>#+=|{}.!-])', r'\\\1', str(text))
 
-# 🔁 Мониторинг сайтов
+# ===== Мониторинг сайтов =====
 async def send_site_status(type, msg: str):
     if type == "problem":
         message = f"🌐 *Проблема с сайтом:*\n\n{escape_markdown(msg)}"
@@ -64,46 +86,11 @@ async def check_single_site(url):
         print(f"❌ Ошибка при обращении к {url}: {e}")
         return False
 
-# async def monitor_sites():
-#     os.makedirs("logs/sites", exist_ok=True)
-#     logger = logging.getLogger("monitoring.sites")
-#     logger.setLevel(logging.INFO)
-
-#     file_handler = logging.FileHandler("logs/sites/sites.log", encoding="utf-8")
-#     formatter = logging.Formatter("%(asctime)s [%(levelname)s] %(message)s")
-#     file_handler.setFormatter(formatter)
-#     logger.addHandler(file_handler)
-
-#     hour, minute = map(int, SITES_MONITOR["time"].split(":"))
-
-#     while True:
-#         now = datetime.datetime.now()
-#         target_time = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
-
-#         if now >= target_time:
-#             logger.info("⏰ Запускаем проверку сайтов")
-#             for url in SITES_MONITOR["urls"]:
-#                 result = await check_single_site(url)
-#                 if result:
-#                     logger.info(f"✅ {url} — доступен.")
-#                 else:
-#                     logger.warning(f"❌ {url} — не доступен")
-#                     await send_site_status("problem", url)
-
-#             tomorrow = now + datetime.timedelta(days=1)
-#             next_run = tomorrow.replace(hour=hour, minute=minute, second=0, microsecond=0)
-#         else:
-#             next_run = target_time
-
-#         seconds_until_next_run = (next_run - datetime.datetime.now()).total_seconds()
-#         await asyncio.sleep(seconds_until_next_run)
-
 async def monitor_sites():
     os.makedirs("logs/sites", exist_ok=True)
     logger = logging.getLogger("monitoring.sites")
     logger.setLevel(logging.INFO)
 
-    # не плодим хендлеры при повторных импортах
     if not logger.handlers:
         file_handler = logging.FileHandler("logs/sites/sites.log", encoding="utf-8")
         formatter = logging.Formatter("%(asctime)s [%(levelname)s] %(message)s")
@@ -111,34 +98,25 @@ async def monitor_sites():
         logger.addHandler(file_handler)
 
     interval = int(SITES_MONITOR.get("interval", 3600))
-    interval = max(30, interval)  # safety: минимум 30 сек
+    interval = max(30, interval)
     urls = SITES_MONITOR.get("urls", [])
-
-    # помним предыдущее состояние, чтобы не спамить одинаковыми уведомлениями
     last_status: dict[str, bool] = {}
 
     while True:
         for url in urls:
             is_ok = await check_single_site(url)
-
-            # лог в файл
             if is_ok:
                 logger.info(f"✅ {url} — доступен")
             else:
                 logger.warning(f"❌ {url} — недоступен")
-
-            # уведомления только при смене состояния
             prev = last_status.get(url)
             if prev is None:
-                # первое наблюдение — шлём только если плохо
                 if not is_ok:
                     await send_site_status("problem", url)
             else:
                 if prev and not is_ok:
-                    # было ок -> стало плохо
                     await send_site_status("problem", url)
                 elif (not prev) and is_ok:
-                    # было плохо -> стало ок (уведомим о восстановлении)
                     try:
                         await bot.send_message(
                             chat_id=TG_ID,
@@ -147,12 +125,10 @@ async def monitor_sites():
                         )
                     except Exception as e:
                         print(f"Ошибка при отправке отчёта о восстановлении: {e}")
-
             last_status[url] = is_ok
-
         await asyncio.sleep(interval)
 
-# Информация о процессоре и оперативной памяти
+# ===== CPU/RAM =====
 async def send_cpu_ram_status(server, data):
     cpu = data["cpu"]
     ram = data["ram"]
@@ -265,7 +241,7 @@ async def monitor_cpu_ram(server, logger):
 
         await asyncio.sleep(interval)
 
-# Информация о дисках
+# ===== SSD =====
 async def send_disk_status(server, percent):
     name = server["name"]
     threshold = server["disk"]["threshold"]
@@ -336,7 +312,7 @@ async def monitor_disks(server, logger):
 
         await asyncio.sleep(interval)
 
-# Информация о процессах
+# ===== Процессы =====
 async def send_process_status(server, missing=None):
     name = server["name"]
     if missing:
@@ -411,7 +387,7 @@ async def monitor_processes(server, logger):
 
         await asyncio.sleep(interval)
 
-# Мониторинг майнинговых процессов
+# ===== Отслеживание майнеров =====
 async def _get_running_procs_local() -> list[str]:
     names = set()
     try:
@@ -503,7 +479,7 @@ async def monitor_miners(server, logger):
 
         await asyncio.sleep(interval)
 
-# Информация о обновлениях
+# ===== Обновления =====
 async def send_update_status(server, updates=None):
     name = server["name"]
     if updates:
@@ -562,7 +538,6 @@ async def monitor_updates(server, logger):
         target_time = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
 
         if now >= target_time:
-            # если уже позже — сдвигаем на следующий день
             target_time += datetime.timedelta(days=1)
 
         sleep_seconds = (target_time - now).total_seconds()
@@ -580,7 +555,7 @@ async def monitor_updates(server, logger):
         except Exception as e:
             logger.error(f"[{server['name']}] ❌ Ошибка при мониторинге обновлений: {e}")
 
-# 🔁 Основной мониторинг одного сервера
+# ===== Основной код одного сервера =====
 async def monitor(server):
     logger = get_server_logger(server["name"])
     tasks = [
@@ -592,7 +567,7 @@ async def monitor(server):
     ]
     await asyncio.gather(*tasks)
 
-# 🚀 Запуск всех мониторингов
+# 🚀 ===== Запуск мониторинга =====
 async def main():
     print("🚀 Мониторинг запущен...")
     tasks = [monitor(server) for server in SERVERS]
