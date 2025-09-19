@@ -33,25 +33,37 @@ import logging
 from logging.handlers import TimedRotatingFileHandler
 
 # ===== Логгер ===== 
-def get_server_logger(name):
+def get_server_logger(server_id: str):
     os.makedirs("logs/monitoring", exist_ok=True)
-    logger = logging.getLogger(f"monitoring.{name}")
+    logger = logging.getLogger(f"monitoring.{server_id}")
     logger.setLevel(logging.INFO)
     logger.propagate = False
 
-    file_handler = TimedRotatingFileHandler(
-        filename=f"logs/monitoring/{name}.log",
-        when="midnight",
-        interval=1,
-        backupCount=7,
-        encoding="utf-8"
-    )
-    formatter = logging.Formatter("%(asctime)s [%(levelname)s] %(message)s")
-    file_handler.setFormatter(formatter)
+    if not logger.handlers:
+        file_handler = TimedRotatingFileHandler(
+            filename=f"logs/monitoring/{server_id}.log",
+            when="midnight",
+            interval=1,
+            backupCount=7,
+            encoding="utf-8"
+        )
+        formatter = logging.Formatter("%(asctime)s [%(levelname)s] %(message)s")
+        file_handler.setFormatter(formatter)
+        logger.addHandler(file_handler)
 
-    logger.addHandler(file_handler)
     return logger
 
+# ===== Глобальные логгеры =====
+LOGGERS: dict[str, logging.Logger] = {}
+
+def init_loggers():
+    # серверные логгеры
+    for sid in SERVERS.keys():
+        LOGGERS[sid] = get_server_logger(sid)
+    LOGGERS["sites"] = get_server_logger("sites")
+    LOGGERS["global"] = get_server_logger("global")
+
+# ===== Инициализация бота =====
 bot = Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode="MarkdownV2"))
 
 # ===== Правка сообщений для Телеграм =====
@@ -87,15 +99,7 @@ async def check_single_site(url):
         return False
 
 async def monitor_sites():
-    os.makedirs("logs/sites", exist_ok=True)
-    logger = logging.getLogger("monitoring.sites")
-    logger.setLevel(logging.INFO)
-
-    if not logger.handlers:
-        file_handler = logging.FileHandler("logs/sites/sites.log", encoding="utf-8")
-        formatter = logging.Formatter("%(asctime)s [%(levelname)s] %(message)s")
-        file_handler.setFormatter(formatter)
-        logger.addHandler(file_handler)
+    logger = LOGGERS["sites"]
 
     interval = int(SITES_MONITOR.get("interval", 3600))
     interval = max(30, interval)
@@ -129,117 +133,206 @@ async def monitor_sites():
         await asyncio.sleep(interval)
 
 # ===== CPU/RAM =====
-async def send_cpu_ram_status(server, data):
-    cpu = data["cpu"]
-    ram = data["ram"]
-    load = data.get("load", {})
+# Глобальное состояние CPU/RAM для всех серверов
+CPU_STATE = {sid: {"status": "NORMAL", "level": 0} for sid in SERVERS}
 
-    name = escape_markdown(server["name"])
-    cpu_val = escape_markdown(f"{cpu:.1f}%")
-    ram_val = escape_markdown(f"{ram:.1f}%")
-    load_1 = escape_markdown(f"{load.get('1min', 0):.2f}")
-    load_5 = escape_markdown(f"{load.get('5min', 0):.2f}")
-    load_15 = escape_markdown(f"{load.get('15min', 0):.2f}")
+# Маппинг статуса → ключа интервала и метки для сообщения
+STATUS = {
+    "NORMAL":  {"label": "✅ *НОРМА* ✅",           "interval_key": "normal"},
+    "WARNING": {"label": "⚠️ *ПРЕДУПРЕЖДЕНИЕ* ⚠️",  "interval_key": "warning"},
+    "ALARM":   {"label": "🚨 *ПЕРЕГРУЗКА* 🚨",      "interval_key": "critical"},
+}
 
-    status = "🚨 *ПЕРЕГРУЗКА* 🚨" if cpu > server["cpu_ram"]["cpu_high"] or ram > server["cpu_ram"]["ram_high"] else "✅ *НОРМА* ✅"
-
-    message = (
-        f"*{name}*\n"
-        f"{status}\n\n"
-        f"🖥 *CPU*: `{cpu_val}`\n"
-        f"💻 *RAM*: `{ram_val}`\n"
-        f"📈 *Load Avg*: `{load_1}`, `{load_5}`, `{load_15}`"
-    )
+# Запрос данных о CPU/RAM с API сервера
+async def cpu_ram__fetch_data(server_id):
+    logger = LOGGERS[server_id]
+    srv = SERVERS[server_id]
+    url = f"{srv['base_url']}/cpu_ram?token={srv['token']}"
+    timeout = aiohttp.ClientTimeout(connect=10, sock_read=20)
 
     try:
-        await bot.send_message(
-            chat_id=TG_ID,
-            text=message,
-            parse_mode="MarkdownV2"
-        )
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            async with session.get(url) as resp:
+                if resp.status == 200:
+                    return await resp.json()
+                else:
+                    logger.warning(f"[{server_id}] ❌ Неверный статус ответа: {resp.status}")
     except Exception as e:
-        print(f"[{server['name']}] ❌ Ошибка при отправке сообщения: {e}")
-
-async def fetch_cpu_ram_data(server):
-    if server["type"] == "local":
-        cpu = psutil.cpu_percent(interval=1)
-        ram = psutil.virtual_memory().percent
-        load1, load5, load15 = psutil.getloadavg()
-        return {
-            "cpu": cpu,
-            "ram": ram,
-            "load": {
-                "1min": load1,
-                "5min": load5,
-                "15min": load15
-            }
-        }
-
-    elif server["type"] == "remote":
-        url = f"{server['base_url']}{server['cpu_ram']['url']}?token={server['token']}"
-        try:
-            async with aiohttp.ClientSession() as session:
-                async with session.get(url, timeout=5) as resp:
-                    if resp.status == 200:
-                        return await resp.json()
-        except Exception:
-            return None
+        logger.error(f"[{server_id}] ❌ Ошибка при запросе CPU/RAM: {e}")
 
     return None
 
-async def monitor_cpu_ram(server, logger):
-    if "cpu_ram" not in server:
-        logger.warning(f"[{server['name']}] ⚠️ Отсутствует конфигурация CPU/RAM.")
-        return
 
-    cfg = server["cpu_ram"]
-    interval = cfg["interval"]["normal"]
-    alert = False
-    alert_level = 0
+# Анализ полученных данных и обновление CPU_STATE
+async def cpu_ram__analizer(server_id, data):
+    logger = LOGGERS[server_id]
+    srv = SERVERS[server_id]
+    cfg = srv["cpu_ram"]
+    intervals = cfg["interval"]
 
-    while True:
-        data = await fetch_cpu_ram_data(server)
+    st = CPU_STATE[server_id]
+    status = st["status"]
+    level = st["level"]
 
+    try:
+        # нет данных — интервал по текущему статусу, без уведомлений
         if not data:
-            logger.warning(f"[{server['name']}] ❌ Нет данных от CPU/RAM.")
-            await asyncio.sleep(interval)
-            continue
+            interval = intervals[STATUS[st["status"]]["interval_key"]]
+            return interval, False
 
-        cpu = data["cpu"]
-        ram = data["ram"]
-        load = data.get("load", {})
+        cpu = float(data["cpu"])
+        ram = float(data["ram"])
 
-        logger.info(
-            f"[{server['name']}] CPU={cpu:.1f}% | RAM={ram:.1f}% | "
-            f"Load: {load.get('1min', 0):.2f}, {load.get('5min', 0):.2f}, {load.get('15min', 0):.2f}"
-        )
+        hi_cpu, lo_cpu = cfg["cpu_high"], cfg["cpu_low"]
+        hi_ram, lo_ram = cfg["ram_high"], cfg["ram_low"]
 
-        if (cfg["cpu_low"] < cpu < cfg["cpu_high"]) or (cfg["ram_low"] < ram < cfg["ram_high"]):
-            interval = cfg["interval"]["warning"]
-            # logger.debug(f"[{server['name']}] ⚠️ Состояние WARNING: интервал {interval}")
-            alert_level = 0
+        in_critical = (cpu > hi_cpu) or (ram > hi_ram)
+        in_warning  = ((lo_cpu < cpu < hi_cpu) or (lo_ram < ram < hi_ram))
+        in_normal   = (cpu < lo_cpu) and (ram < lo_ram)
 
-        if cpu > cfg["cpu_high"] or ram > cfg["ram_high"]:
-            interval = cfg["interval"]["critical"]
-            # logger.debug(f"[{server['name']}] 🔥 Состояние CRITICAL: интервал {interval}")
-            if not alert:
-                alert_level += 1
-                # logger.debug(f"[{server['name']}] 🚨 Увеличен alert_level: {alert_level}")
-            if alert_level >= 3:
-                # logger.warning(f"[{server['name']}] 🚨 Превышение порогов 3 раза подряд. Отправка уведомления.")
-                await send_cpu_ram_status(server, data)
-                alert = True
-                alert_level = 0
+        notify = False
 
-        if cpu < cfg["cpu_low"] and ram < cfg["ram_low"]:
-            interval = cfg["interval"]["normal"]
-            alert_level = 0
-            if alert:
-                # logger.info(f"[{server['name']}] 🔔 Восстановление состояния. CPU/RAM в норме.")
-                await send_cpu_ram_status(server, data)
-                alert = False
+        if in_critical:
+            if status != "ALARM":
+                level += 1
+                # logger.debug(f"[{srv['name']}] critical sample #{level} (cpu={cpu:.1f} ram={ram:.1f})")
+                if level >= 4:
+                    st["status"] = "ALARM"
+                    level = 0
+                    notify = True
+                else:
+                    st["status"] = "WARNING"
+            else:
+                st["status"] = "ALARM"
+                level = 0
 
+        elif in_warning:
+            st["status"] = "WARNING"
+            level = 0
+
+        elif in_normal:
+            st["status"] = "NORMAL"
+            if status == "ALARM":
+                notify = True
+            level = 0
+
+        st["level"] = level
+        interval = intervals[STATUS[st["status"]]["interval_key"]]
+
+        # logger.info(f"[{srv['name']}] status={st['status']} level={level} cpu={cpu:.1f}% ram={ram:.1f}% -> interval={interval}s notify={notify}")
+        return interval, notify
+    
+    except Exception as e:
+        logger.error(f"[{server_id}] cpu_ram__analizer:failed -> {e}")
+        interval = intervals[STATUS[st["status"]]["interval_key"]]
+        return interval, False
+
+
+# Формирование и отправка сообщения в Telegram
+async def cpu_ram__send_message(data_by_server):
+    logger = LOGGERS["global"]
+    try:
+        if not data_by_server:
+            logger.error("cpu_ram__send_message: empty data")
+            return
+
+        parts = []
+        prepared = []
+
+        for sid, sdata in data_by_server.items():
+            srv   = SERVERS[sid]
+            name  = escape_markdown(srv["name"])
+            st    = CPU_STATE[sid]["status"]
+            label = STATUS[st]["label"]
+
+            cpu   = sdata["cpu"]
+            ram   = sdata["ram"]
+            load  = sdata.get("load") or {}
+
+            cpu_val = escape_markdown(f"{cpu:.1f}%")
+            ram_val = escape_markdown(f"{ram:.1f}%")
+            l1  = escape_markdown(f"{load['1min']:.2f}")
+            l5  = escape_markdown(f"{load['5min']:.2f}")
+            l15 = escape_markdown(f"{load['15min']:.2f}")
+
+            prepared.append((name, label, cpu_val, ram_val, l1, l5, l15))
+
+        if len(prepared) == 1:
+            # детальный формат
+            name, label, cpu_val, ram_val, l1, l5, l15 = prepared[0]
+            msg = (
+                f"*{name}*\n"
+                f"{label}\n\n"
+                f"🖥 *CPU*: `{cpu_val} %`\n"
+                f"💻 *RAM*: `{ram_val} %`\n"
+                f"📈 *Load Avg*: `{l1}`, `{l5}`, `{l15}`"
+            )
+        else:
+            for (name, label, cpu_val, ram_val, l1, l5, l15) in prepared:
+                parts.append(
+                    f"*{name}*\n"
+                    f"{label}\n"
+                    f"🖥 CPU: `{cpu_val} %` | 💻 RAM: `{ram_val} %` | 📈 Load: `{l1}`, `{l5}`, `{l15}`"
+                )
+            msg = "\n\n".join(parts)
+
+        await bot.send_message(chat_id=TG_ID, text=msg, parse_mode="MarkdownV2")
+
+    except Exception as e:
+        logger.error(f"cpu_ram__send_message failed -> {e}")
+
+
+# Автоматический мониторинг CPU/RAM (циклически)
+async def cpu_ram__auto_monitoring(server_id):
+    logger = LOGGERS[server_id]
+    while True:
+        try:
+            # 1. получаем свежие данные
+            data = await cpu_ram__fetch_data(server_id)
+
+            # 2. анализируем
+            interval, notify = await cpu_ram__analizer(server_id, data)
+
+            # 3. если нужно — отправляем сообщение
+            if notify and data:
+                await cpu_ram__send_message({server_id: data})
+
+        except Exception as e:
+            logger.error(f"[{server_id}] cpu_ram__auto_monitoring failed -> {e}")
+            interval = SERVERS[server_id]["cpu_ram"]["interval"][STATUS[CPU_STATE[server_id]["status"]]["interval_key"]]
+
+        # 4. ждём до следующего опроса
         await asyncio.sleep(interval)
+
+
+# Ручной запрос CPU/RAM по кнопке (одноразовый)
+async def cpu_ram__manual_button(server_id):
+    logger = LOGGERS["global"] if server_id == "ALL" else LOGGERS[server_id]
+    try:
+        # ===== все сервера =====
+        if server_id == "ALL":
+            data_map = {}
+            for sid in SERVERS.keys():
+                data = await cpu_ram__fetch_data(sid)
+                if data:
+                    data_map[sid] = data
+                else:
+                    logger.warning(f"[{sid}] ❌ Не удалось получить CPU/RAM для ручного запроса")
+            if data_map:
+                await cpu_ram__send_message(data_map)
+            else:
+                logger.warning("❌ Ручной запрос CPU/RAM: ни по одному серверу данных нет")
+            return
+
+        # ===== один сервер =====
+        data = await cpu_ram__fetch_data(server_id)
+        if data:
+            await cpu_ram__send_message({server_id: data})
+        else:
+            logger.warning(f"[{server_id}] ❌ Ручной запрос CPU/RAM: данных нет")
+
+    except Exception as e:
+        logger.error(f"[{server_id}] cpu_ram__manual_button failed -> {e}")
 
 # ===== SSD =====
 async def send_disk_status(server, percent):
@@ -311,6 +404,15 @@ async def monitor_disks(server, logger):
             logger.error(f"[{server['name']}] ❌ Ошибка при мониторинге диска: {e}")
 
         await asyncio.sleep(interval)
+
+# +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+
+
+
+
+
+
+# +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
 
 # ===== Процессы =====
 async def send_process_status(server, missing=None):
@@ -556,21 +658,22 @@ async def monitor_updates(server, logger):
             logger.error(f"[{server['name']}] ❌ Ошибка при мониторинге обновлений: {e}")
 
 # ===== Основной код одного сервера =====
-async def monitor(server):
-    logger = get_server_logger(server["name"])
+async def monitor(server_id: str):
+    logger = LOGGERS[server_id]
     tasks = [
-        asyncio.create_task(monitor_cpu_ram(server, logger)),
-        asyncio.create_task(monitor_disks(server, logger)),
-        asyncio.create_task(monitor_processes(server, logger)),
-        asyncio.create_task(monitor_updates(server, logger)),
-        asyncio.create_task(monitor_miners(server, logger)),
+        asyncio.create_task(cpu_ram__auto_monitoring(server_id)),
+        asyncio.create_task(monitor_disks(server_id, logger)),
+        asyncio.create_task(monitor_processes(server_id, logger)),
+        asyncio.create_task(monitor_updates(server_id, logger)),
+        asyncio.create_task(monitor_miners(server_id, logger)),
     ]
     await asyncio.gather(*tasks)
 
 # 🚀 ===== Запуск мониторинга =====
 async def main():
     print("🚀 Мониторинг запущен...")
-    tasks = [monitor(server) for server in SERVERS]
+    init_loggers()
+    tasks = [monitor(server_id) for server_id in SERVERS.keys()]
     tasks.append(monitor_sites())
     await asyncio.gather(*tasks)
 
