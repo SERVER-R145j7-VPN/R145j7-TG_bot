@@ -258,7 +258,6 @@ async def cpu_ram__send_message(data_by_server):
             prepared.append((name, label, cpu_val, ram_val, l1, l5, l15))
 
         if len(prepared) == 1:
-            # детальный формат
             name, label, cpu_val, ram_val, l1, l5, l15 = prepared[0]
             msg = (
                 f"*{name}*\n"
@@ -335,84 +334,156 @@ async def cpu_ram__manual_button(server_id):
         logger.error(f"[{server_id}] cpu_ram__manual_button failed -> {e}")
 
 # ===== SSD =====
-async def send_disk_status(server, percent):
-    name = server["name"]
-    threshold = server["disk"]["threshold"]
+# Глобальное состояние DISK для всех серверов
+DISK_STATE = {sid: {"alert": False} for sid in SERVERS}
 
-    if percent >= threshold:
-        msg = (
-            f"💽 *{escape_markdown(name)}*\n"
-            f"⚠️ Заполнение диска превысило порог\n"
-            f"`{percent:.1f}%` / `{threshold}%`"
-        )
-    else:
-        msg = (
-            f"💽 *{escape_markdown(name)}*\n"
-            f"✅ С диском всё в порядке\n"
-            f"Текущее заполнение: `{percent:.1f}%`"
-        )
+# Запрос данных о DISK с API сервера
+async def disk__fetch_data(server_id):
+    logger = LOGGERS[server_id]
+    srv = SERVERS[server_id]
+    url = f"{srv['base_url']}/disk?token={srv['token']}"
+    timeout = aiohttp.ClientTimeout(connect=10, sock_read=20)
 
     try:
-        await bot.send_message(chat_id=TG_ID, text=msg, parse_mode="MarkdownV2")
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            async with session.get(url) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    return float(data["disk_percent"])
+                else:
+                    logger.warning(f"[{server_id}] ❌ Неверный статус ответа: {resp.status}")
     except Exception as e:
-        print(f"❌ Ошибка отправки сообщения о диске: {e}")
-
-async def fetch_disk_data(server):
-    if server["type"] == "local":
-        usage = psutil.disk_usage('/')
-        return usage.percent
-
-    elif server["type"] == "remote":
-        try:
-            url = f'{server["base_url"]}{server["disk"]["url"]}?token={server["token"]}'
-            async with aiohttp.ClientSession() as session:
-                async with session.get(url, timeout=10) as resp:
-                    if resp.status == 200:
-                        data = await resp.json()
-                        return data.get("disk_percent")
-        except Exception as e:
-            print(f"[{server['name']}] ❌ Ошибка при получении данных о диске: {e}")
-            return None
+        logger.error(f"[{server_id}] ❌ Ошибка при запросе DISK: {e}")
 
     return None
 
-async def monitor_disks(server, logger):
-    if "disk" not in server:
-        return
 
-    alert = False
-    interval = server["disk"]["interval"]
+# Анализ полученных данных и обновление DISK_STATE
+async def disk__analyzer(server_id, data):
+    logger = LOGGERS[server_id]
+    try:
+        if data is None:
+            return False
+
+        usage = float(data)
+
+        threshold = SERVERS[server_id]["disk"]["threshold"]
+        alert = DISK_STATE[server_id]["alert"]
+
+        if usage > threshold and not alert:
+            DISK_STATE[server_id]["alert"] = True
+            return True
+
+        if usage < threshold and alert:
+            DISK_STATE[server_id]["alert"] = False
+            return True
+
+        return False
+
+    except Exception as e:
+        logger.error(f"[{server_id}] disk__analyzer failed -> {e}")
+        return False
+
+
+# Формирование и отправка сообщения в Telegram
+async def disk__send_message(data_by_server):
+    logger = LOGGERS["global"]
+    try:
+        if not data_by_server:
+            logger.error("disk__send_message: empty data")
+            return
+
+        parts = []
+        prepared = []
+
+        for sid, data in data_by_server.items():
+            srv   = SERVERS[sid]
+            name  = escape_markdown(srv["name"])
+            total = srv["disk"]["total_gb"]
+            usage = float(data["disk_percent"])
+            used  = (total * usage) / 100
+            alert = DISK_STATE[sid]["alert"]
+
+            state = "⚠️ *ПРЕВЫШЕНИЕ*" if alert else "✅ *НОРМА*"
+            usage_val = escape_markdown(f"{usage:.1f}%")
+            used_val  = escape_markdown(f"{used:.1f}/{total} ГБ")
+
+            prepared.append((name, state, used_val, usage_val))
+
+        if len(prepared) == 1:
+            name, state, used_val, usage_val = prepared[0]
+            msg = (
+                f"*{name}*\n"
+                f"{state}\n\n"
+                f"💽 Диск: `{used_val}` — `{usage_val}`"
+            )
+        else:
+            for (name, state, used_val, usage_val) in prepared:
+                parts.append(
+                    f"*{name}*\n"
+                    f"{state}\n"
+                    f"💽 Диск: `{used_val}` — `{usage_val}`"
+                )
+            msg = "\n\n".join(parts)
+
+        await bot.send_message(chat_id=TG_ID, text=msg, parse_mode="MarkdownV2")
+
+    except Exception as e:
+        logger.error(f"disk__send_message failed -> {e}")
+
+
+# Автоматический мониторинг DISK (циклически)
+async def disk__auto_monitoring(server_id):
+    logger = LOGGERS[server_id]
+    interval = SERVERS[server_id]["disk"]["interval"]
 
     while True:
         try:
-            usage = await fetch_disk_data(server)
-            if usage is None:
-                logger.warning(f"[{server['name']}] ❌ Не удалось получить данные о диске.")
-            else:
-                logger.info(f"[{server['name']}] 💽 Использование диска: {usage:.1f}%")
-                threshold = server["disk"]["threshold"]
+            # 1. получаем свежие данные
+            data = await disk__fetch_data(server_id)
 
-                if usage > threshold and not alert:
-                    await send_disk_status(server, usage)
-                    alert = True
+            # 2. анализируем
+            notify = await disk__analyzer(server_id, data)
 
-                elif usage <= threshold and alert:
-                    await send_disk_status(server, usage)
-                    alert = False
+            # 3. если нужно — отправляем сообщение
+            if notify and data is not None:
+                await disk__send_message({server_id: data})
 
         except Exception as e:
-            logger.error(f"[{server['name']}] ❌ Ошибка при мониторинге диска: {e}")
+            logger.error(f"[{server_id}] disk__auto_monitoring failed -> {e}")
 
+        # 4. ждём до следующего опроса
         await asyncio.sleep(interval)
 
-# +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
 
+# Ручной запрос DISK по кнопке (одноразовый)
+async def disk__manual_button(server_id):
+    logger = LOGGERS["global"] if server_id == "ALL" else LOGGERS[server_id]
+    try:
+        # ===== все сервера =====
+        if server_id == "ALL":
+            data_map = {}
+            for sid in SERVERS.keys():
+                data = await disk__fetch_data(sid)
+                if data is not None:
+                    data_map[sid] = data
+                else:
+                    logger.warning(f"[{sid}] ❌ Не удалось получить данные о диске для ручного запроса")
+            if data_map:
+                await disk__send_message(data_map)
+            else:
+                logger.warning("❌ Ручной запрос DISK: ни по одному серверу данных нет")
+            return
 
+        # ===== один сервер =====
+        data = await disk__fetch_data(server_id)
+        if data is not None:
+            await disk__send_message({server_id: data})
+        else:
+            logger.warning(f"[{server_id}] ❌ Ручной запрос DISK: данных нет")
 
-
-
-
-# +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+    except Exception as e:
+        logger.error(f"[{server_id}] disk__manual_button failed -> {e}")
 
 # ===== Процессы =====
 async def send_process_status(server, missing=None):
@@ -488,6 +559,11 @@ async def monitor_processes(server, logger):
             logger.error(f"[{server['name']}] ❌ Ошибка при мониторинге процессов: {e}")
 
         await asyncio.sleep(interval)
+
+# +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+
+
+# +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
 
 # ===== Отслеживание майнеров =====
 async def _get_running_procs_local() -> list[str]:
@@ -662,10 +738,10 @@ async def monitor(server_id: str):
     logger = LOGGERS[server_id]
     tasks = [
         asyncio.create_task(cpu_ram__auto_monitoring(server_id)),
-        asyncio.create_task(monitor_disks(server_id, logger)),
-        asyncio.create_task(monitor_processes(server_id, logger)),
-        asyncio.create_task(monitor_updates(server_id, logger)),
-        asyncio.create_task(monitor_miners(server_id, logger)),
+        asyncio.create_task(disk__auto_monitoring(server_id)),
+        asyncio.create_task(monitor_processes(server_id)),
+        asyncio.create_task(monitor_updates(server_id)),
+        asyncio.create_task(monitor_miners(server_id)),
     ]
     await asyncio.gather(*tasks)
 
