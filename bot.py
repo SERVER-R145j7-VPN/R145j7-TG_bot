@@ -1,3 +1,10 @@
+"""
+• Telegram-бот для управления и мониторинга
+  - Запускается через aiogram.
+  - Обрабатывает команды и callback-запросы.
+  - Запускает мониторинг серверов и сайтов.
+  - Ведёт собственный лог (bot.log) и access-лог (access.log).
+"""
 import os
 import logging
 from logging.handlers import TimedRotatingFileHandler
@@ -45,7 +52,7 @@ async def handle_callback(callback: CallbackQuery):
     await handle_callback_server(callback)
 
 async def main():
-    logger.info("Bot is starting...")
+    logger.info("Bot R145j7 is starting...")
 
     async with Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode="MarkdownV2")) as bot:
         dp = Dispatcher()
@@ -55,11 +62,14 @@ async def main():
         dp.callback_query.register(handle_callback)
 
         # Фоновые задачи
-        tasks = [asyncio.create_task(monitor(server), name=f"monitor:{server.get('name', 'srv')}") for server in SERVERS]
+        tasks = [asyncio.create_task(monitor(sid), name=f"monitor:{SERVERS[sid]['name']}") for sid in SERVERS.keys()]
+        logger.info(f"Monitoring started for servers: {', '.join(SERVERS.keys())}")
         tasks.append(asyncio.create_task(monitor_sites(), name="monitor:sites"))
+        logger.info("Monitoring of sites started")
 
         try:
             await dp.start_polling(bot)
+            logger.info("Bot polling started")
         finally:
             # Корректное завершение фоновых задач
             for t in tasks:
