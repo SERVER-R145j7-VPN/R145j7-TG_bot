@@ -267,7 +267,7 @@ async def cpu_ram__send_message(data_by_server):
                 parts.append(
                     f"*{name}*\n"
                     f"{label}\n"
-                    f"🖥 CPU: `{cpu_val} %` | 💻 RAM: `{ram_val} %` | 📈 Load: `{l1}`, `{l5}`, `{l15}`"
+                    f"🖥 CPU: `{cpu_val} %` \\| 💻 RAM: `{ram_val} %` \\| 📈 Load: `{l1}`, `{l5}`, `{l15}`"
                 )
             msg = "\n\n".join(parts)
 
@@ -958,7 +958,7 @@ async def backups__send_message(server_id, data):
                     t1 = datetime.datetime.strptime(started, "%Y-%m-%d %H:%M:%S")
                     t2 = datetime.datetime.strptime(finished, "%Y-%m-%d %H:%M:%S")
                     duration = max(0, int((t2 - t1).total_seconds()))
-                    dur_line = f"🕒 `{escape_markdown(t1.strftime('%d.%m.%Y %H:%M:%S'))}` => `{escape_markdown(humanize_seconds(duration))}`"
+                    dur_line = f"🕒 `{escape_markdown(t1.strftime('%d.%m.%Y %H:%M:%S'))}` \\=\\> `{escape_markdown(humanize_seconds(duration))}`"
                 except Exception:
                     dur_line = f"🕒 Старт: `{escape_markdown(started)}`, финиш: `{escape_markdown(finished)}`"
 
@@ -971,7 +971,7 @@ async def backups__send_message(server_id, data):
                     ok = bool((info or {}).get("ok"))
                     size_b = (info or {}).get("size_bytes", 0)
                     size_h = humanize_size(size_b)
-                    line = f"{'✅' if ok else '❌'} {name} => {escape_markdown(size_h)}"
+                    line = f"{'✅' if ok else '❌'} {name} \\=\\> {escape_markdown(size_h)}"
                     parts_block.append(line)
             else:
                 parts_block.append("❌ Нет данных о частях бэкапа")
