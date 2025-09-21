@@ -1,21 +1,24 @@
+"""
+Данный файл содержит хэндлеры для работы с кнопками Telegram-бота.
+Реализует доступ к категориям мониторинга (CPU/RAM, диск, процессы, обновления, бэкапы, сайты)
+и ручные запросы по серверам и сайтам через Telegram-интерфейс.
+"""
 from aiogram.types import Message, CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup
 from config import TG_ID, SERVERS, SITES_MONITOR
 from monitoring import (
-    fetch_cpu_ram_data, send_cpu_ram_status,
-    fetch_disk_data, send_disk_status,
-    fetch_process_data, send_process_status,
-    fetch_updates, send_update_status,
+    cpu_ram__manual_button,
+    disk__manual_button,
+    processes__manual_button,
+    updates__manual_button,
+    backups__manual_button,
     check_single_site, send_site_status,
     escape_markdown
 )
 
-CATEGORIES = ["cpu_ram", "disk", "processes", "updates", "sites"]
+CATEGORIES = ["cpu_ram", "disk", "processes", "updates", "backups", "sites"]
 
 def is_authorized(user_id: int) -> bool:
     return user_id == TG_ID
-
-def get_server_by_name(name: str):
-    return next((s for s in SERVERS if s["name"] == name), None)
 
 def build_main_menu():
     buttons = [[InlineKeyboardButton(text=cat.upper(), callback_data=f"cat:{cat}")] for cat in CATEGORIES]
@@ -24,8 +27,12 @@ def build_main_menu():
 def build_servers_menu(category: str):
     if category == "sites":
         return None
-    buttons = [[InlineKeyboardButton(text=s["name"], callback_data=f"{category}:{s['name']}")] for s in SERVERS]
-    buttons.append([InlineKeyboardButton(text="Все", callback_data=f"{category}:all")])
+    # show server names but encode server_id in callback
+    buttons = [
+        [InlineKeyboardButton(text=cfg["name"], callback_data=f"{category}:{cfg['name']}")]
+        for sid, cfg in SERVERS.items()
+    ]
+    buttons.append([InlineKeyboardButton(text="Все", callback_data=f"{category}:ALL")])
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 async def handle_command_servers(message: Message):
@@ -66,27 +73,15 @@ async def handle_callback_server(callback: CallbackQuery):
         return
 
     category, target = data.split(":")
-    servers = SERVERS if target == "all" else [get_server_by_name(target)]
 
-    for server in servers:
-        if category == "cpu_ram":
-            data = await fetch_cpu_ram_data(server)
-            if data:
-                await send_cpu_ram_status(server, data)
-
-        elif category == "disk":
-            percent = await fetch_disk_data(server)
-            if percent is not None:
-                await send_disk_status(server, percent)
-
-        elif category == "processes":
-            if "processes" in server and server["processes"].get("required"):
-                running = await fetch_process_data(server)
-                required = server["processes"]["required"]
-                missing = [p for p in required if p not in running]
-                await send_process_status(server, missing)
-
-        elif category == "updates":
-            if "updates" in server:
-                updates = await fetch_updates(server)
-                await send_update_status(server, updates)
+    # target is either a specific server_id or "ALL"
+    if category == "cpu_ram":
+        await cpu_ram__manual_button(target)
+    elif category == "disk":
+        await disk__manual_button(target)
+    elif category == "processes":
+        await processes__manual_button(target)
+    elif category == "updates":
+        await updates__manual_button(target)
+    elif category == "backups":
+        await backups__manual_button(target)
