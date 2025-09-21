@@ -156,7 +156,7 @@ async def cpu_ram__fetch_data(server_id):
                 if resp.status == 200:
                     return await resp.json()
                 else:
-                    logger.warning(f"[{server_id}] ❌ Неверный статус ответа: {resp.status}")
+                    logger.warning(f"[{server_id}] ❌ Неверный статус ответа для CPU/RAM: {resp.status}")
     except Exception as e:
         logger.error(f"[{server_id}] ❌ Ошибка при запросе CPU/RAM: {e}")
 
@@ -343,7 +343,7 @@ async def disk__fetch_data(server_id):
                     data = await resp.json()
                     return float(data["disk_percent"])
                 else:
-                    logger.warning(f"[{server_id}] ❌ Неверный статус ответа: {resp.status}")
+                    logger.warning(f"[{server_id}] ❌ Неверный статус ответа для DISK: {resp.status}")
     except Exception as e:
         logger.error(f"[{server_id}] ❌ Ошибка при запросе DISK: {e}")
 
@@ -470,65 +470,96 @@ async def disk__manual_button(server_id):
     except Exception as e:
         logger.error(f"[{server_id}] disk__manual_button failed -> {e}")
 
-# ===== Процессы =====
-# +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+# ===== PROCESSES =====
+PROCESSES_STATE = {sid: {"failed": [], "miners": []} for sid in SERVERS}
 
-# ===== SYSTEMCTL PROCESSES =====
-PROC_SYSTEMCTL_STATE = {sid: {"alert": False, "failed": [], "miners": []} for sid in SERVERS}
-
-# Запрос списка запущенных сервисов systemctl с API сервера
-async def proc_systemctl__fetch_data(server_id):
+# Запрос списка запущенных сервисов с API сервера
+async def processes__fetch_data(server_id):
     logger = LOGGERS[server_id]
     srv = SERVERS[server_id]
-    url = f"{srv['base_url']}/processes_systemctl?token={srv['token']}"
     timeout = aiohttp.ClientTimeout(connect=10, sock_read=20)
+    results = []
+
     try:
         async with aiohttp.ClientSession(timeout=timeout) as session:
-            async with session.get(url) as resp:
-                if resp.status == 200:
-                    return await resp.json()
-                else:
-                    logger.warning(f"[{server_id}] ❌ Неверный статус ответа: {resp.status}")
-    except Exception as e:
-        logger.error(f"[{server_id}] ❌ Ошибка при запросе systemctl: {e}")
-    return None
+            # ===== systemctl =====
+            url_sys = f"{srv['base_url']}/processes_systemctl?token={srv['token']}"
+            try:
+                async with session.get(url_sys) as resp:
+                    if resp.status == 200:
+                        data = await resp.json()
+                        for svc in data.get("services", []):
+                            name   = str(svc.get("name", "")).strip()
+                            active = str(svc.get("active")).lower()
+                            sub    = str(svc.get("sub")).lower()
+                            state  = "failed" if "failed" in (active, sub) else "ok"
+                            results.append({"name": name, "source": "SCT", "state": state})
+                    else:
+                        logger.warning(f"[{server_id}] ❌ Неверный статус ответа для systemctl: {resp.status}")
+            except Exception as e:
+                logger.error(f"[{server_id}] ❌ Ошибка при запросе systemctl -> {e}")
 
-# Анализ полученных данных и обновление PROC_SYSTEMCTL_STATE
-async def proc_systemctl__analyzer(server_id, data):
+            # ===== pm2 =====
+            url_pm2 = f"{srv['base_url']}/processes_pm2?token={srv['token']}"
+            try:
+                async with session.get(url_pm2) as resp:
+                    if resp.status == 200:
+                        data = await resp.json()
+                        for proc in data.get("processes", []):
+                            name   = str(proc.get("name", "")).strip()
+                            status = str(proc.get("status")).lower()
+                            state  = "failed" if status == "failed" else "ok"
+                            results.append({"name": name, "source": "PM2", "state": state})
+                    else:
+                        logger.warning(f"[{server_id}] ❌ Неверный статус ответа для pm2: {resp.status}")
+            except Exception as e:
+                logger.error(f"[{server_id}] ❌ Ошибка при запросе pm2 -> {e}")
+
+    except Exception as e:
+        logger.error(f"[{server_id}] ❌ processes__fetch_data global error -> {e}")
+
+    return results
+
+# Анализ полученных данных и обновление PROCESSES_STATE
+async def processes__analyzer(server_id, data):
     logger = LOGGERS[server_id]
-    state  = PROC_SYSTEMCTL_STATE[server_id]
+    state  = PROCESSES_STATE[server_id]
 
     try:
-        services = (data or {}).get("services") or []
-        if not services:
+        items = data or []
+        if not items:
             return False
 
-        # ==== крашнутые процессы ====
+        # ==== упавшие процессы ====
         failed = [
-            svc["name"].strip()
-            for svc in services
-            if str(svc.get("active")).lower() == "failed" or str(svc.get("sub")).lower() == "failed"
+            {
+                "name":   str(it.get("name", "")).strip(),
+                "source": str(it.get("source", "")).upper(),
+            }
+            for it in items
+            if str(it.get("state")).lower() == "failed"
         ]
 
         # ==== процессы-майнеры ====
         miners = [
             {
-                "name": svc["name"].strip(),
-                "active": str(svc.get("active")).lower(),
-                "sub": str(svc.get("sub")).lower()
+                "name":   str(it.get("name", "")).strip(),
+                "source": str(it.get("source", "")).upper(),
+                "state":  str(it.get("state", "")).lower(),
             }
-            for svc in services
-            if str(svc.get("name")).lower() in [m.lower() for m in MINERS]
+            for it in items
+            if str(it.get("name", "")).lower() in [m.lower() for m in MINERS]
         ]
 
         changed = False
 
-        # сравнение failed
-        if set(failed) != set(state["failed"]):
+        failed_names = [f["name"] for f in failed]
+        prev_failed_names = [f.get("name") for f in state.get("failed", [])]
+
+        if set(failed_names) != set(prev_failed_names):
             state["failed"] = failed
             changed = True
 
-        # сравнение miners
         miners_names = [m["name"] for m in miners]
         prev_names   = [m["name"] for m in state.get("miners", [])]
 
@@ -539,37 +570,69 @@ async def proc_systemctl__analyzer(server_id, data):
         return changed
 
     except Exception as e:
-        logger.error(f"[{server_id}] proc_systemctl__analyzer failed -> {e}")
+        logger.error(f"[{server_id}] processes__analyzer failed -> {e}")
         return False
 
 # Формирование и отправка сообщения в Telegram
-async def proc_systemctl__send_message(server_id):
+async def processes__send_message(server_id):
     logger = LOGGERS["global"] if server_id == "ALL" else LOGGERS[server_id]
     try:
         targets = SERVERS.keys() if server_id == "ALL" else [server_id]
         parts = []
 
         for sid in targets:
-            name   = escape_markdown(SERVERS[sid]["name"])
-            state  = PROC_SYSTEMCTL_STATE[sid]
-            failed = state.get("failed", []) or []
-            miners = state.get("miners", []) or []
+            name  = escape_markdown(SERVERS[sid]["name"])
+            state = PROCESSES_STATE[sid]
 
-            if not failed and not miners:
-                parts.append(f"*{name}*\n✅ Все процессы в норме")
+            # ---- failed (ожидаем список dict{name,source}) ----
+            failed_raw = state.get("failed", []) or []
+            failed_bkt = {"SCT": [], "PM2": []}
+            for item in failed_raw:
+                if isinstance(item, dict):
+                    src   = str(item.get("source", "")).upper().strip()
+                    fname = str(item.get("name", "")).strip()
+                    if src == "SCT":
+                        failed_bkt["SCT"].append(fname)
+                    elif src == "PM2":
+                        failed_bkt["PM2"].append(fname)
+                    else:
+                        logger.error(f"[{sid}] processes__send_message: unknown failed source '{src}' for '{fname}'")
+                else:
+                    logger.error(f"[{sid}] processes__send_message: failed item without source: {item!r}")
+
+            # ---- miners (ожидаем список dict{name,source}) ----
+            miners_raw = state.get("miners", []) or []
+            miners_bkt = {"SCT": [], "PM2": []}
+            for m in miners_raw:
+                src   = str(m.get("source", "")).upper().strip()
+                mname = escape_markdown(str(m.get("name", "")).strip())
+                if src == "SCT":
+                    miners_bkt["SCT"].append(mname)
+                elif src == "PM2":
+                    miners_bkt["PM2"].append(mname)
+                else:
+                    logger.error(f"[{sid}] processes__send_message: unknown miner source '{src}' for '{mname}'")
+
+            any_failed = bool(failed_bkt["SCT"] or failed_bkt["PM2"])
+            any_miners = bool(miners_bkt["SCT"] or miners_bkt["PM2"])
+
+            if not any_failed and not any_miners:
+                parts.append(f"*{name}*\n✅ Крашнутых сервисов нет\n⛏️ Майнеры не обнаружены")
                 continue
 
             block = [f"*{name}*\n"]
-            if failed:
-                failed_lines = "\n".join(f"• `{escape_markdown(svc)}`" for svc in failed)
-                block.append(f"❌ *Сервисы с ошибками:*\n{failed_lines}")
 
-            if miners:
-                miners_lines = "\n".join(
-                    f"• `{escape_markdown(str(m.get('name','')))} — {escape_markdown(str(m.get('active','')))} / {escape_markdown(str(m.get('sub','')))}'"
-                    for m in miners
-                )
-                block.append(f"⚠️ *ВНИМАНИЕ: обнаружены майнеры\\!* ⛏️\n{miners_lines}")
+            # ---- Крашнутые ----
+            block.append("❌ *Сервисы с ошибками:*" if any_failed else "✅ Ошибок сервисов не обнаружено")
+            if any_failed:
+                block.append("• SCT:\n" + "\n".join(f"  - `{escape_markdown(s)}`" for s in failed_bkt["SCT"]) if failed_bkt["SCT"] else "• SCT: ✅ ок")
+                block.append("• PM2:\n" + "\n".join(f"  - `{escape_markdown(s)}`" for s in failed_bkt["PM2"]) if failed_bkt["PM2"] else "• PM2: ✅ ок")
+
+            # ---- Майнеры ----
+            block.append("⛏️ *⚠️ВНИМАНИЕ⚠️: обнаружены майнеры\\!*" if any_miners else "⛏️ Майнеры не обнаружены")
+            if any_miners:
+                block.append("• SCT:\n" + "\n".join(f"  - `{s}`" for s in miners_bkt["SCT"]) if miners_bkt["SCT"] else "• SCT: ✅ ок")
+                block.append("• PM2:\n" + "\n".join(f"  - `{s}`" for s in miners_bkt["PM2"]) if miners_bkt["PM2"] else "• PM2: ✅ ок")
 
             parts.append("\n".join(block))
 
@@ -577,106 +640,52 @@ async def proc_systemctl__send_message(server_id):
         await bot.send_message(chat_id=TG_ID, text=msg, parse_mode="MarkdownV2")
 
     except Exception as e:
-        logger.error(f"[{server_id}] proc_systemctl__send_message failed -> {e}")
+        logger.error(f"[{server_id}] processes__send_message failed -> {e}")
 
-# Автоматический мониторинг systemctl (циклически)
-async def proc_systemctl__auto_monitoring(server_id):
+# Автоматический мониторинг (циклически)
+async def processes__auto_monitoring(server_id):
     logger = LOGGERS[server_id]
     interval = int(SERVERS[server_id]["processes_systemctl"]["interval"])
     while True:
         try:
-            data = await proc_systemctl__fetch_data(server_id)
-            changed = await proc_systemctl__analyzer(server_id, data)
+            data = await processes__fetch_data(server_id)
+            changed = await processes__analyzer(server_id, data)
             if changed:
-                await proc_systemctl__send_message(server_id)
+                await processes__send_message(server_id)
         except Exception as e:
-            logger.error(f"[{server_id}] proc_systemctl__auto_monitoring failed -> {e}")
+            logger.error(f"[{server_id}] processes__auto_monitoring failed -> {e}")
         await asyncio.sleep(interval)
 
-# Ручной запрос systemctl по кнопке (одноразовый)
-async def proc_systemctl__manual_button(server_id):
+# Ручной запрос по кнопке (одноразовый)
+async def processes__manual_button(server_id):
     logger = LOGGERS["global"] if server_id == "ALL" else LOGGERS[server_id]
     try:
         # ===== все сервера =====
         if server_id == "ALL":
             any_data = False
             for sid in SERVERS.keys():
-                data = await proc_systemctl__fetch_data(sid)
+                data = await processes__fetch_data(sid)
                 if data is not None:
-                    await proc_systemctl__analyzer(sid, data)
+                    await processes__analyzer(sid, data)
                     any_data = True
                 else:
-                    logger.warning(f"[{sid}] ❌ Не удалось получить данные о systemctl для ручного запроса")
+                    logger.warning(f"[{sid}] ❌ Не удалось получить данные о процессах для ручного запроса")
             if any_data:
-                await proc_systemctl__send_message("ALL")
+                await processes__send_message("ALL")
             else:
-                logger.warning("❌ Ручной запрос SYSTEMCTL: ни по одному серверу данных нет")
+                logger.warning("❌ Ручной запрос PROCESS: ни по одному серверу данных нет")
             return
 
         # ===== один сервер =====
-        data = await proc_systemctl__fetch_data(server_id)
+        data = await processes__fetch_data(server_id)
         if data is not None:
-            await proc_systemctl__analyzer(server_id, data)
-            await proc_systemctl__send_message(server_id)
+            await processes__analyzer(server_id, data)
+            await processes__send_message(server_id)
         else:
-            logger.warning(f"[{server_id}] ❌ Ручной запрос SYSTEMCTL: данных нет")
+            logger.warning(f"[{server_id}] ❌ Ручной запрос PROCESS: данных нет")
 
     except Exception as e:
-        logger.error(f"[{server_id}] proc_systemctl__manual_button failed -> {e}")
-
-# ===== PM2 PROCESSES =====
-PROC_PM2_STATE = {sid: {"alert": False, "failed": []} for sid in SERVERS}
-
-# Запрос списка запущенных процессов pm2 с API сервера
-async def proc_pm2__fetch_data(server_id):
-    logger = LOGGERS[server_id]
-    srv = SERVERS[server_id]
-    url = f"{srv['base_url']}/processes_pm2?token={srv['token']}"
-    timeout = aiohttp.ClientTimeout(connect=10, sock_read=20)
-    try:
-        async with aiohttp.ClientSession(timeout=timeout) as session:
-            async with session.get(url) as resp:
-                if resp.status == 200:
-                    return await resp.json()
-                else:
-                    logger.warning(f"[{server_id}] ❌ Неверный статус ответа: {resp.status}")
-    except Exception as e:
-        logger.error(f"[{server_id}] ❌ Ошибка при запросе pm2: {e}")
-    return None
-
-# ===== PM2 PROCESSES =====
-PROC_PM2_STATE = {sid: {"alert": False, "failed": [], "miners": []} for sid in SERVERS}
-
-# Анализ полученных данных и обновление PROC_PM2_STATE
-async def proc_pm2__analyzer(server_id, data):
-    """
-    Определи, всё ли в порядке.
-    Обнови PROC_PM2_STATE[server_id].
-    Верни (notify: bool).
-    """
-    pass
-
-# Формирование и отправка сообщения в Telegram
-async def proc_pm2__send_message(data_by_server):
-    """
-    Сформируй и отправь сообщение (одиночное или общее).
-    """
-    pass
-
-# Автоматический мониторинг pm2 (циклически)
-async def proc_pm2__auto_monitoring(server_id):
-    """
-    Цикл: fetch → analyze → (optional send) → sleep(interval).
-    """
-    pass
-
-# Ручной запрос pm2 по кнопке (одноразовый)
-async def proc_pm2__manual_button(server_id):
-    """
-    Если ALL → собрать данные по всем серверам.
-    Иначе → по одному серверу.
-    """
-    pass
+        logger.error(f"[{server_id}] processes__manual_button failed -> {e}")
 
 # +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
 
@@ -762,9 +771,9 @@ async def monitor(server_id: str):
     tasks = [
         asyncio.create_task(cpu_ram__auto_monitoring(server_id)),
         asyncio.create_task(disk__auto_monitoring(server_id)),
-        asyncio.create_task(proc_systemctl__fetch_data(server_id)),
-        asyncio.create_task(proc_pm2__fetch_data(server_id)),
+        asyncio.create_task(processes__fetch_data(server_id)),
         asyncio.create_task(monitor_updates(server_id)),
+        # Логика обработки бэкапов
     ]
     await asyncio.gather(*tasks)
 
