@@ -24,7 +24,7 @@ import asyncio
 import aiohttp
 import datetime
 from aiogram.client.default import DefaultBotProperties
-from config import TG_ID, BOT_TOKEN, SERVERS, SITES_MONITOR, MINER_SCAN
+from config import TG_ID, BOT_TOKEN, SERVERS, SITES_MONITOR, MINERS
 from aiogram import Bot
 import os
 import re
@@ -286,21 +286,13 @@ async def cpu_ram__auto_monitoring(server_id):
     logger = LOGGERS[server_id]
     while True:
         try:
-            # 1. получаем свежие данные
             data = await cpu_ram__fetch_data(server_id)
-
-            # 2. анализируем
             interval, notify = await cpu_ram__analizer(server_id, data)
-
-            # 3. если нужно — отправляем сообщение
             if notify and data:
                 await cpu_ram__send_message({server_id: data})
-
         except Exception as e:
             logger.error(f"[{server_id}] cpu_ram__auto_monitoring failed -> {e}")
             interval = SERVERS[server_id]["cpu_ram"]["interval"][STATUS[CPU_STATE[server_id]["status"]]["interval_key"]]
-
-        # 4. ждём до следующего опроса
         await asyncio.sleep(interval)
 
 
@@ -439,20 +431,13 @@ async def disk__auto_monitoring(server_id):
 
     while True:
         try:
-            # 1. получаем свежие данные
             data = await disk__fetch_data(server_id)
-
-            # 2. анализируем
             notify = await disk__analyzer(server_id, data)
-
-            # 3. если нужно — отправляем сообщение
             if notify and data is not None:
                 await disk__send_message({server_id: data})
 
         except Exception as e:
             logger.error(f"[{server_id}] disk__auto_monitoring failed -> {e}")
-
-        # 4. ждём до следующего опроса
         await asyncio.sleep(interval)
 
 
@@ -486,176 +471,214 @@ async def disk__manual_button(server_id):
         logger.error(f"[{server_id}] disk__manual_button failed -> {e}")
 
 # ===== Процессы =====
-async def send_process_status(server, missing=None):
-    name = server["name"]
-    if missing:
-        msg = (
-            f"🧩 *{escape_markdown(name)}*\n"
-            f"❌ Не запущены процессы:\n"
-            + "\n".join(f"• `{escape_markdown(proc)}`" for proc in missing)
-        )
-    else:
-        msg = (
-            f"🧩 *{escape_markdown(name)}*\n"
-            f"✅ Все необходимые процессы запущены"
-        )
-
-    try:
-        await bot.send_message(chat_id=TG_ID, text=msg, parse_mode="MarkdownV2")
-    except Exception as e:
-        print(f"❌ Ошибка отправки сообщения о процессах: {e}")
-
-async def fetch_process_data(server):
-    if "processes" not in server or not server["processes"].get("required"):
-        return []
-
-    if server["type"] == "local":
-        try:
-            proc = await asyncio.create_subprocess_shell(
-                "systemctl list-units --type=service --state=running --no-pager --no-legend",
-                stdout=asyncio.subprocess.PIPE
-            )
-            stdout, _ = await proc.communicate()
-            lines = stdout.decode().strip().split("\n")
-            services = [line.split()[0].replace(".service", "") for line in lines if line]
-            return services
-        except Exception as e:
-            print(f"[{server['name']}] ❌ Ошибка получения локальных сервисов: {e}")
-            return []
-
-    elif server["type"] == "remote":
-        try:
-            url = f'{server["base_url"]}{server["processes"]["url"]}?token={server["token"]}'
-            async with aiohttp.ClientSession() as session:
-                async with session.get(url, timeout=10) as resp:
-                    if resp.status == 200:
-                        data = await resp.json()
-                        return data.get("running", [])
-        except Exception as e:
-            print(f"[{server['name']}] ❌ Ошибка получения удалённых сервисов: {e}")
-            return []
-
-    return []
-
-async def monitor_processes(server, logger):
-    if "processes" not in server or not server["processes"].get("required"):
-        return
-
-    interval = server["processes"]["interval"]
-
-    while True:
-        try:
-            running = await fetch_process_data(server)
-            required = server["processes"]["required"]
-            missing = [proc for proc in required if proc not in running]
-
-            if missing:
-                logger.warning(f"[{server['name']}] ❌ Отсутствуют процессы: {', '.join(missing)}")
-                await send_process_status(server, missing)
-            else:
-                logger.info(f"[{server['name']}] ✅ Все процессы в порядке")
-
-        except Exception as e:
-            logger.error(f"[{server['name']}] ❌ Ошибка при мониторинге процессов: {e}")
-
-        await asyncio.sleep(interval)
-
 # +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
 
+# ===== SYSTEMCTL PROCESSES =====
+PROC_SYSTEMCTL_STATE = {sid: {"alert": False, "failed": [], "miners": []} for sid in SERVERS}
 
-# +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
-
-# ===== Отслеживание майнеров =====
-async def _get_running_procs_local() -> list[str]:
-    names = set()
+# Запрос списка запущенных сервисов systemctl с API сервера
+async def proc_systemctl__fetch_data(server_id):
+    logger = LOGGERS[server_id]
+    srv = SERVERS[server_id]
+    url = f"{srv['base_url']}/processes_systemctl?token={srv['token']}"
+    timeout = aiohttp.ClientTimeout(connect=10, sock_read=20)
     try:
-        for p in psutil.process_iter(["name", "cmdline"]):
-            info = p.info
-            if info.get("name"):
-                names.add(info["name"].lower())
-            if info.get("cmdline"):
-                for part in info["cmdline"]:
-                    if not part:
-                        continue
-                    base = os.path.basename(str(part))
-                    if base:
-                        names.add(base.lower())
-    except Exception:
-        pass
-    return sorted(names)
-
-async def _get_running_procs_remote(server) -> list[str]:
-    url = f'{server["base_url"]}{server["processes"]["url"]}?token={server["token"]}'
-    try:
-        async with aiohttp.ClientSession() as session:
-            async with session.get(url, timeout=10) as resp:
-                if resp.status != 200:
-                    return []
-                data = await resp.json()
-                # пробуем разные ключи
-                for key in ("processes", "running", "ps"):
-                    if isinstance(data.get(key), list):
-                        return [str(x).lower() for x in data[key]]
-    except Exception:
-        pass
-    return []
-
-def _detect_miners(running: list[str], suspects: list[str]) -> list[str]:
-    rset = set(running)
-    found = set()
-    for proc in rset:
-        for sig in suspects:
-            s = sig.lower()
-            if s == proc or s in proc:
-                found.add(proc)
-    return sorted(found)
-
-async def send_miner_alert(server, found: list[str]):
-    name = escape_markdown(server["name"])
-    lines = "\n".join(f"• `{escape_markdown(p)}`" for p in found)
-    msg = (
-        f"⛏️🚨 *Обнаружены майнер-процессы* на *{name}*:\n"
-        f"{lines}"
-    )
-    try:
-        await bot.send_message(chat_id=TG_ID, text=msg, parse_mode="MarkdownV2")
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            async with session.get(url) as resp:
+                if resp.status == 200:
+                    return await resp.json()
+                else:
+                    logger.warning(f"[{server_id}] ❌ Неверный статус ответа: {resp.status}")
     except Exception as e:
-        print(f"[{server['name']}] ❌ Ошибка при отправке miner-alert: {e}")
+        logger.error(f"[{server_id}] ❌ Ошибка при запросе systemctl: {e}")
+    return None
 
-async def monitor_miners(server, logger):
+# Анализ полученных данных и обновление PROC_SYSTEMCTL_STATE
+async def proc_systemctl__analyzer(server_id, data):
+    logger = LOGGERS[server_id]
+    state  = PROC_SYSTEMCTL_STATE[server_id]
+
     try:
-        interval = int(MINER_SCAN.get("interval", 3600))
-        suspects = [s.lower() for s in MINER_SCAN.get("processes", [])]
-    except Exception:
-        logger.error(f"[{server['name']}] ❌ MINER_SCAN config invalid, мониторинг выключен.")
-        return
+        services = (data or {}).get("services") or []
+        if not services:
+            return False
 
-    if not suspects or interval <= 0:
-        logger.info(f"[{server['name']}] ⛏️ MINER_SCAN отключён (пустой список или неверный interval).")
-        return
+        # ==== крашнутые процессы ====
+        failed = [
+            svc["name"].strip()
+            for svc in services
+            if str(svc.get("active")).lower() == "failed" or str(svc.get("sub")).lower() == "failed"
+        ]
 
+        # ==== процессы-майнеры ====
+        miners = [
+            {
+                "name": svc["name"].strip(),
+                "active": str(svc.get("active")).lower(),
+                "sub": str(svc.get("sub")).lower()
+            }
+            for svc in services
+            if str(svc.get("name")).lower() in [m.lower() for m in MINERS]
+        ]
+
+        changed = False
+
+        # сравнение failed
+        if set(failed) != set(state["failed"]):
+            state["failed"] = failed
+            changed = True
+
+        # сравнение miners
+        miners_names = [m["name"] for m in miners]
+        prev_names   = [m["name"] for m in state.get("miners", [])]
+
+        if set(miners_names) != set(prev_names):
+            state["miners"] = miners
+            changed = True
+
+        return changed
+
+    except Exception as e:
+        logger.error(f"[{server_id}] proc_systemctl__analyzer failed -> {e}")
+        return False
+
+# Формирование и отправка сообщения в Telegram
+async def proc_systemctl__send_message(server_id):
+    logger = LOGGERS["global"] if server_id == "ALL" else LOGGERS[server_id]
+    try:
+        targets = SERVERS.keys() if server_id == "ALL" else [server_id]
+        parts = []
+
+        for sid in targets:
+            name   = escape_markdown(SERVERS[sid]["name"])
+            state  = PROC_SYSTEMCTL_STATE[sid]
+            failed = state.get("failed", []) or []
+            miners = state.get("miners", []) or []
+
+            if not failed and not miners:
+                parts.append(f"*{name}*\n✅ Все процессы в норме")
+                continue
+
+            block = [f"*{name}*\n"]
+            if failed:
+                failed_lines = "\n".join(f"• `{escape_markdown(svc)}`" for svc in failed)
+                block.append(f"❌ *Сервисы с ошибками:*\n{failed_lines}")
+
+            if miners:
+                miners_lines = "\n".join(
+                    f"• `{escape_markdown(str(m.get('name','')))} — {escape_markdown(str(m.get('active','')))} / {escape_markdown(str(m.get('sub','')))}'"
+                    for m in miners
+                )
+                block.append(f"⚠️ *ВНИМАНИЕ: обнаружены майнеры\\!* ⛏️\n{miners_lines}")
+
+            parts.append("\n".join(block))
+
+        msg = "\n\n".join(parts)
+        await bot.send_message(chat_id=TG_ID, text=msg, parse_mode="MarkdownV2")
+
+    except Exception as e:
+        logger.error(f"[{server_id}] proc_systemctl__send_message failed -> {e}")
+
+# Автоматический мониторинг systemctl (циклически)
+async def proc_systemctl__auto_monitoring(server_id):
+    logger = LOGGERS[server_id]
+    interval = int(SERVERS[server_id]["processes_systemctl"]["interval"])
     while True:
         try:
-            if server["type"] == "local":
-                running = await _get_running_procs_local()
-            else:
-                if "processes" not in server or "url" not in server["processes"]:
-                    logger.warning(f"[{server['name']}] ⛏️ Нет remote /processes API — пропускаю проверку.")
-                    await asyncio.sleep(interval)
-                    continue
-                running = await _get_running_procs_remote(server)
-
-            found = _detect_miners(running, suspects)
-            if found:
-                logger.warning(f"[{server['name']}] ⛏️🚨 Найдены майнеры: {', '.join(found)}")
-                await send_miner_alert(server, found)
-            else:
-                logger.info(f"[{server['name']}] ⛏️ Проверка майнеров: ничего не найдено.")
-
+            data = await proc_systemctl__fetch_data(server_id)
+            changed = await proc_systemctl__analyzer(server_id, data)
+            if changed:
+                await proc_systemctl__send_message(server_id)
         except Exception as e:
-            logger.error(f"[{server['name']}] ❌ Ошибка проверки майнеров: {e}")
-
+            logger.error(f"[{server_id}] proc_systemctl__auto_monitoring failed -> {e}")
         await asyncio.sleep(interval)
+
+# Ручной запрос systemctl по кнопке (одноразовый)
+async def proc_systemctl__manual_button(server_id):
+    logger = LOGGERS["global"] if server_id == "ALL" else LOGGERS[server_id]
+    try:
+        # ===== все сервера =====
+        if server_id == "ALL":
+            any_data = False
+            for sid in SERVERS.keys():
+                data = await proc_systemctl__fetch_data(sid)
+                if data is not None:
+                    await proc_systemctl__analyzer(sid, data)
+                    any_data = True
+                else:
+                    logger.warning(f"[{sid}] ❌ Не удалось получить данные о systemctl для ручного запроса")
+            if any_data:
+                await proc_systemctl__send_message("ALL")
+            else:
+                logger.warning("❌ Ручной запрос SYSTEMCTL: ни по одному серверу данных нет")
+            return
+
+        # ===== один сервер =====
+        data = await proc_systemctl__fetch_data(server_id)
+        if data is not None:
+            await proc_systemctl__analyzer(server_id, data)
+            await proc_systemctl__send_message(server_id)
+        else:
+            logger.warning(f"[{server_id}] ❌ Ручной запрос SYSTEMCTL: данных нет")
+
+    except Exception as e:
+        logger.error(f"[{server_id}] proc_systemctl__manual_button failed -> {e}")
+
+# ===== PM2 PROCESSES =====
+PROC_PM2_STATE = {sid: {"alert": False, "failed": []} for sid in SERVERS}
+
+# Запрос списка запущенных процессов pm2 с API сервера
+async def proc_pm2__fetch_data(server_id):
+    logger = LOGGERS[server_id]
+    srv = SERVERS[server_id]
+    url = f"{srv['base_url']}/processes_pm2?token={srv['token']}"
+    timeout = aiohttp.ClientTimeout(connect=10, sock_read=20)
+    try:
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            async with session.get(url) as resp:
+                if resp.status == 200:
+                    return await resp.json()
+                else:
+                    logger.warning(f"[{server_id}] ❌ Неверный статус ответа: {resp.status}")
+    except Exception as e:
+        logger.error(f"[{server_id}] ❌ Ошибка при запросе pm2: {e}")
+    return None
+
+# ===== PM2 PROCESSES =====
+PROC_PM2_STATE = {sid: {"alert": False, "failed": [], "miners": []} for sid in SERVERS}
+
+# Анализ полученных данных и обновление PROC_PM2_STATE
+async def proc_pm2__analyzer(server_id, data):
+    """
+    Определи, всё ли в порядке.
+    Обнови PROC_PM2_STATE[server_id].
+    Верни (notify: bool).
+    """
+    pass
+
+# Формирование и отправка сообщения в Telegram
+async def proc_pm2__send_message(data_by_server):
+    """
+    Сформируй и отправь сообщение (одиночное или общее).
+    """
+    pass
+
+# Автоматический мониторинг pm2 (циклически)
+async def proc_pm2__auto_monitoring(server_id):
+    """
+    Цикл: fetch → analyze → (optional send) → sleep(interval).
+    """
+    pass
+
+# Ручной запрос pm2 по кнопке (одноразовый)
+async def proc_pm2__manual_button(server_id):
+    """
+    Если ALL → собрать данные по всем серверам.
+    Иначе → по одному серверу.
+    """
+    pass
+
+# +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
 
 # ===== Обновления =====
 async def send_update_status(server, updates=None):
@@ -739,9 +762,9 @@ async def monitor(server_id: str):
     tasks = [
         asyncio.create_task(cpu_ram__auto_monitoring(server_id)),
         asyncio.create_task(disk__auto_monitoring(server_id)),
-        asyncio.create_task(monitor_processes(server_id)),
+        asyncio.create_task(proc_systemctl__fetch_data(server_id)),
+        asyncio.create_task(proc_pm2__fetch_data(server_id)),
         asyncio.create_task(monitor_updates(server_id)),
-        asyncio.create_task(monitor_miners(server_id)),
     ]
     await asyncio.gather(*tasks)
 
