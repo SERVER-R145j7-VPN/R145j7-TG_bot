@@ -21,8 +21,7 @@
 import asyncio
 import aiohttp
 import datetime
-from aiogram.client.default import DefaultBotProperties
-from config import TG_ID, BOT_TOKEN, SERVERS, SITES_MONITOR, MINERS
+from config import TG_ID, SERVERS, SITES_MONITOR, MINERS
 from aiogram import Bot
 import os
 import re
@@ -61,8 +60,14 @@ def init_loggers():
     LOGGERS["sites"] = get_server_logger("sites")
     LOGGERS["global"] = get_server_logger("global")
 
-# ===== Инициализация бота =====
-bot = Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode="MarkdownV2"))
+# ===== Бот берём извне (из bot.py) =====
+from typing import Optional
+
+bot: Optional[Bot] = None
+
+def set_bot(external_bot: Bot) -> None:
+    global bot
+    bot = external_bot
 
 # ===== Правка сообщений для Телеграм =====
 def escape_markdown(text: str) -> str:
@@ -75,7 +80,11 @@ async def send_site_status(type, msg: str):
     elif type == "request":
         message = f"🌐 *Результат опроса сайтов:*\n\n{escape_markdown(msg)}"
     try:
-        await bot.send_message(
+        b = bot
+        if b is None:
+            print("Bot instance is not set. Call set_bot() from bot.py first.")
+            return
+        await b.send_message(
             chat_id=TG_ID,
             text=message,
             parse_mode="MarkdownV2"
@@ -120,7 +129,11 @@ async def monitor_sites():
                     await send_site_status("problem", url)
                 elif (not prev) and is_ok:
                     try:
-                        await bot.send_message(
+                        b = bot
+                        if b is None:
+                            print("Bot instance is not set. Call set_bot() from bot.py first.")
+                            return
+                        await b.send_message(
                             chat_id=TG_ID,
                             text=f"🌐 *Сайт восстановился:*\n\n{escape_markdown(url)}",
                             parse_mode="MarkdownV2",
@@ -271,7 +284,11 @@ async def cpu_ram__send_message(data_by_server):
                 )
             msg = "\n\n".join(parts)
 
-        await bot.send_message(chat_id=TG_ID, text=msg, parse_mode="MarkdownV2")
+        b = bot
+        if b is None:
+            logger.error("Bot instance is not set. Call set_bot() from bot.py first.")
+            return
+        await b.send_message(chat_id=TG_ID, text=msg, parse_mode="MarkdownV2")
 
     except Exception as e:
         logger.error(f"cpu_ram__send_message failed -> {e}")
@@ -435,7 +452,11 @@ async def disk__send_message(data_by_server):
                 )
             msg = "\n\n".join(parts)
 
-        await bot.send_message(chat_id=TG_ID, text=msg, parse_mode="MarkdownV2")
+        b = bot
+        if b is None:
+            logger.error("Bot instance is not set. Call set_bot() from bot.py first.")
+            return
+        await b.send_message(chat_id=TG_ID, text=msg, parse_mode="MarkdownV2")
 
     except Exception as e:
         logger.error(f"disk__send_message failed -> {e}")
@@ -664,7 +685,11 @@ async def processes__send_message(server_id):
             parts.append("\n".join(block))
 
         msg = "\n\n".join(parts)
-        await bot.send_message(chat_id=TG_ID, text=msg, parse_mode="MarkdownV2")
+        b = bot
+        if b is None:
+            logger.error("Bot instance is not set. Call set_bot() from bot.py first.")
+            return
+        await b.send_message(chat_id=TG_ID, text=msg, parse_mode="MarkdownV2")
 
     except Exception as e:
         logger.error(f"[{server_id}] processes__send_message failed -> {e}")
@@ -809,7 +834,11 @@ async def updates__send_message(server_id):
             parts.append(f"*{name}*\n📦 Доступны обновления:\n{pkg_lines}")
 
         msg = "\n\n".join(parts)
-        await bot.send_message(chat_id=TG_ID, text=msg, parse_mode="MarkdownV2")
+        b = bot
+        if b is None:
+            logger.error("Bot instance is not set. Call set_bot() from bot.py first.")
+            return
+        await b.send_message(chat_id=TG_ID, text=msg, parse_mode="MarkdownV2")
 
     except Exception as e:
         logger.error(f"[{server_id}] updates__send_message failed -> {e}")
@@ -990,7 +1019,11 @@ async def backups__send_message(server_id, data):
             parts_out.append("\n".join(block_lines))
 
         msg = "\n\n".join(parts_out)
-        await bot.send_message(chat_id=TG_ID, text=msg, parse_mode="MarkdownV2")
+        b = bot
+        if b is None:
+            logger.error("Bot instance is not set. Call set_bot() from bot.py first.")
+            return
+        await b.send_message(chat_id=TG_ID, text=msg, parse_mode="MarkdownV2")
 
     except Exception as e:
         logger.error(f"[{server_id}] backups__send_message failed -> {e}")
