@@ -282,31 +282,33 @@ async def cpu_ram__auto_monitoring(server_id):
     while True:
         try:
             data = await cpu_ram__fetch_data(server_id)
+            if data is None:
+                logger.warning("CPU-RAM: нет данных (fetch failed)")
+                interval = SERVERS[server_id]["cpu_ram"]["interval"][STATUS[CPU_STATE[server_id]["status"]]["interval_key"]]
+                await asyncio.sleep(interval)
+                continue
             interval, notify = await cpu_ram__analizer(server_id, data)
             if notify and data:
                 await cpu_ram__send_message({server_id: data})
 
             st = CPU_STATE[server_id]
-            if data is not None:
-                cpu  = float(data.get("cpu", float("nan")))
-                ram  = float(data.get("ram", float("nan")))
-                load = data.get("load") or {}
-                l1   = float(load.get("1min", float("nan")))
-                l5   = float(load.get("5min", float("nan")))
-                l15  = float(load.get("15min", float("nan")))
+            cpu  = float(data.get("cpu", float("nan")))
+            ram  = float(data.get("ram", float("nan")))
+            load = data.get("load") or {}
+            l1   = float(load.get("1min", float("nan")))
+            l5   = float(load.get("5min", float("nan")))
+            l15  = float(load.get("15min", float("nan")))
 
-                log_line = (
-                    f"CPU-RAM: cpu={cpu:.1f} ram={ram:.1f} "
-                    f"l1={l1:.2f} l5={l5:.2f} l15={l15:.2f} "
-                    f"status={st['status']} level={st['level']} interval={interval}"
-                )
+            log_line = (
+                f"CPU-RAM: cpu={cpu:.1f} ram={ram:.1f} "
+                f"l1={l1:.2f} l5={l5:.2f} l15={l15:.2f} "
+                f"status={st['status']} level={st['level']} interval={interval}"
+            )
 
-                if st["status"] == "NORMAL":
-                    logger.info(log_line)
-                else:
-                    logger.warning(log_line)
+            if st["status"] == "NORMAL":
+                logger.info(log_line)
             else:
-                logger.warning("CPU-RAM: нет данных")
+                logger.warning(log_line)
 
         except Exception as e:
             logger.error(f"[{server_id}] cpu_ram__auto_monitoring failed -> {e}")
@@ -446,18 +448,20 @@ async def disk__auto_monitoring(server_id):
     while True:
         try:
             data = await disk__fetch_data(server_id)
+            if data is None:
+                logger.warning("DISK: нет данных (fetch failed)")
+                await asyncio.sleep(interval)
+                continue
+
             notify = await disk__analyzer(server_id, data)
-            if notify and data is not None:
+            if notify:
                 await disk__send_message({server_id: data})
 
-            if data is not None:
-                log_line = f"DISK: usage={data:.1f}%"
-                if DISK_STATE[server_id]["alert"]:
-                    logger.warning(log_line)
-                else:
-                    logger.info(log_line)
+            log_line = f"DISK: usage={data:.1f}%"
+            if DISK_STATE[server_id]["alert"]:
+                logger.warning(log_line)
             else:
-                logger.warning("DISK: нет данных")
+                logger.info(log_line)
 
         except Exception as e:
             logger.error(f"[{server_id}] disk__auto_monitoring failed -> {e}")
@@ -648,14 +652,14 @@ async def processes__send_message(server_id):
             # ---- Крашнутые ----
             block.append("❌ *Сервисы с ошибками:*" if any_failed else "✅ Ошибок сервисов не обнаружено")
             if any_failed:
-                block.append("• SCT:\n" + "\n".join(f"  - `{escape_markdown(s)}`" for s in failed_bkt["SCT"]) if failed_bkt["SCT"] else "• SCT: ✅ ок")
-                block.append("• PM2:\n" + "\n".join(f"  - `{escape_markdown(s)}`" for s in failed_bkt["PM2"]) if failed_bkt["PM2"] else "• PM2: ✅ ок")
+                block.append("• SCT:\n" + "\n".join(f"  \\- `{escape_markdown(s)}`" for s in failed_bkt["SCT"]) if failed_bkt["SCT"] else "• SCT: ✅ ок")
+                block.append("• PM2:\n" + "\n".join(f"  \\- `{escape_markdown(s)}`" for s in failed_bkt["PM2"]) if failed_bkt["PM2"] else "• PM2: ✅ ок")
 
             # ---- Майнеры ----
             block.append("⛏️ *⚠️ВНИМАНИЕ⚠️: обнаружены майнеры\\!*" if any_miners else "⛏️ Майнеры не обнаружены")
             if any_miners:
-                block.append("• SCT:\n" + "\n".join(f"  - `{s}`" for s in miners_bkt["SCT"]) if miners_bkt["SCT"] else "• SCT: ✅ ок")
-                block.append("• PM2:\n" + "\n".join(f"  - `{s}`" for s in miners_bkt["PM2"]) if miners_bkt["PM2"] else "• PM2: ✅ ок")
+                block.append("• SCT:\n" + "\n".join(f"  \\- `{s}`" for s in miners_bkt["SCT"]) if miners_bkt["SCT"] else "• SCT: ✅ ок")
+                block.append("• PM2:\n" + "\n".join(f"  \\- `{s}`" for s in miners_bkt["PM2"]) if miners_bkt["PM2"] else "• PM2: ✅ ок")
 
             parts.append("\n".join(block))
 
@@ -672,6 +676,11 @@ async def processes__auto_monitoring(server_id):
     while True:
         try:
             data = await processes__fetch_data(server_id)
+            if data is None:
+                logger.warning("PROCESSES: нет данных (fetch failed)")
+                await asyncio.sleep(interval)
+                continue
+
             changed = await processes__analyzer(server_id, data)
             if changed:
                 await processes__send_message(server_id)
@@ -1007,14 +1016,15 @@ async def backups__auto_monitoring(server_id):
 
         try:
             data = await backups__fetch_data(server_id)
+            if data is None:
+                logger.warning("BACKUPS: нет данных (fetch failed)")
+                continue
+
             notify = await backups__analyzer(server_id, data)
             if notify:
                 await backups__send_message(server_id, data)
 
-            if data:
-                logger.info(f"BACKUPS: {data}")
-            else:
-                logger.warning("BACKUPS: нет данных")
+            logger.info(f"BACKUPS: {data}")
 
         except Exception as e:
             logger.error(f"[{server_id}] backups__auto_monitoring failed -> {e}")

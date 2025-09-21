@@ -16,7 +16,7 @@ from aiogram.client.default import DefaultBotProperties
 from contextlib import suppress
 
 from config import BOT_TOKEN, SERVERS
-from monitoring import monitor, monitor_sites
+from monitoring import monitor, monitor_sites, init_loggers
 from handlers import handle_command_servers, handle_callback_server
 
 # 🔧 Логирование
@@ -53,6 +53,8 @@ async def handle_callback(callback: CallbackQuery):
 
 async def main():
     logger.info("Bot R145j7 is starting...")
+    init_loggers()
+    logger.info("Monitoring loggers initialized")
 
     async with Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode="MarkdownV2")) as bot:
         dp = Dispatcher()
@@ -63,13 +65,13 @@ async def main():
 
         # Фоновые задачи
         tasks = [asyncio.create_task(monitor(sid), name=f"monitor:{SERVERS[sid]['name']}") for sid in SERVERS.keys()]
-        logger.info(f"Monitoring started for servers: {', '.join(SERVERS.keys())}")
+        logger.info(f"Monitoring started for servers: {', '.join([cfg['name'] for cfg in SERVERS.values()])}")
         tasks.append(asyncio.create_task(monitor_sites(), name="monitor:sites"))
         logger.info("Monitoring of sites started")
 
         try:
-            await dp.start_polling(bot)
             logger.info("Bot polling started")
+            await dp.start_polling(bot)
         finally:
             # Корректное завершение фоновых задач
             for t in tasks:
