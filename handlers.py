@@ -27,9 +27,9 @@ def build_main_menu():
 def build_servers_menu(category: str):
     if category == "sites":
         return None
-    # show server names but encode server_id in callback
+    # show server names, but callback carries server_id (sid)
     buttons = [
-        [InlineKeyboardButton(text=cfg["name"], callback_data=f"{category}:{cfg['name']}")]
+        [InlineKeyboardButton(text=cfg["name"], callback_data=f"{category}:{sid}")]
         for sid, cfg in SERVERS.items()
     ]
     buttons.append([InlineKeyboardButton(text="Все", callback_data=f"{category}:ALL")])
@@ -72,16 +72,17 @@ async def handle_callback_server(callback: CallbackQuery):
             )
         return
 
-    category, target = data.split(":")
+    category, target = data.split(":", 1)
 
-    # target is either a specific server_id or "ALL"
+    arg = "ALL" if target == "ALL" else target
+
     if category == "cpu_ram":
-        await cpu_ram__manual_button(target)
+        await cpu_ram__manual_button(arg)
     elif category == "disk":
-        await disk__manual_button(target)
+        await disk__manual_button(arg)
     elif category == "processes":
-        await processes__manual_button(target)
+        await processes__manual_button(arg)
     elif category == "updates":
-        await updates__manual_button(target)
+        await updates__manual_button(arg)
     elif category == "backups":
-        await backups__manual_button(target)
+        await backups__manual_button(arg)

@@ -409,8 +409,8 @@ async def disk__send_message(data_by_server):
             srv   = SERVERS[sid]
             name  = escape_markdown(srv["name"])
             total = srv["disk"]["total_gb"]
-            usage = float(data["disk_percent"])
-            used  = (total * usage) / 100
+            usage = float(data)
+            used  = (total * usage) / 100.0
             alert = DISK_STATE[sid]["alert"]
 
             state = "⚠️ *ПРЕВЫШЕНИЕ*" if alert else "✅ *НОРМА*"
@@ -958,7 +958,7 @@ async def backups__send_message(server_id, data):
                     t1 = datetime.datetime.strptime(started, "%Y-%m-%d %H:%M:%S")
                     t2 = datetime.datetime.strptime(finished, "%Y-%m-%d %H:%M:%S")
                     duration = max(0, int((t2 - t1).total_seconds()))
-                    dur_line = f"🕒 {t1.strftime('%d.%m.%Y %H:%M:%S')} => {escape_markdown(humanize_seconds(duration))}"
+                    dur_line = f"🕒 `{escape_markdown(t1.strftime('%d.%m.%Y %H:%M:%S'))}` => `{escape_markdown(humanize_seconds(duration))}`"
                 except Exception:
                     dur_line = f"🕒 Старт: `{escape_markdown(started)}`, финиш: `{escape_markdown(finished)}`"
 
