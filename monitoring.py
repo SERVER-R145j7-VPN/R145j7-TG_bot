@@ -8,13 +8,12 @@
 • Запросы данных с серверов по АПИ
   - /cpu_ram             → загрузка CPU и RAM, load average
   - /disk                → заполнение диска
-  - /processes_systemctl → статус системных сервисов
-  - /processes_pm2       → статус процессов pm2
+  - /processes           → статус системных сервисов
   - /updates             → наличие системных обновлений
   - /backup_json         → отчёт о выполнении бэкапов
 
 • Контроль майнеров
-  - Поиск подозрительных процессов (через локальный psutil или remote /processes_*).
+  - Поиск подозрительных процессов (майнеров) в списке запущенных.
 
 • Мониторинг сайтов
   - Проверка списка URL, уведомления при падении и восстановлении.
@@ -463,6 +462,7 @@ async def disk__manual_button(server_id):
         logger.error(f"[{server_id}] disk__manual_button failed -> {e}")
 
 # ===== PROCESSES =====
+# Глобальное состояние PROCESSES для всех серверов
 PROCESSES_STATE = {sid: {"failed": [], "miners": []} for sid in SERVERS}
 
 # Запрос списка запущенных сервисов с API сервера
@@ -679,11 +679,8 @@ async def processes__manual_button(server_id):
     except Exception as e:
         logger.error(f"[{server_id}] processes__manual_button failed -> {e}")
 
-# ===== Обновления =====
-
-# +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
-
 # ===== UPDATES =====
+# Глобальное состояние UPDATES для всех серверов
 UPDATES_STATE = {sid: {"packages": []} for sid in SERVERS}
 
 # Запрос данных об обновлениях с API сервера
@@ -795,7 +792,195 @@ async def updates__manual_button(server_id):
     except Exception as e:
         logger.error(f"[{server_id}] updates__manual_button failed -> {e}")
 
-# +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+# ===== BACKUPS =====
+#  Запрос данных о BACKUPS с API сервера
+async def backups__fetch_data(server_id):
+    logger = LOGGERS[server_id]
+    srv = SERVERS[server_id]
+    url = f"{srv['base_url']}/backup_json?token={srv['token']}"
+    timeout = aiohttp.ClientTimeout(connect=10, sock_read=20)
+
+    try:
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            async with session.get(url) as resp:
+                if resp.status == 200:
+                    return await resp.json()
+                else:
+                    logger.warning(f"[{server_id}] ❌ Неверный статус ответа для BACKUP: {resp.status}")
+    except Exception as e:
+        logger.error(f"[{server_id}] ❌ Ошибка при запросе BACKUP: {e}")
+
+    return None
+
+# Анализ полученных данных
+async def backups__analyzer(server_id, data):
+    logger = LOGGERS[server_id]
+    try:
+        if not data:
+            logger.warning(f"[{server_id}] backups__analyzer: пустой ответ")
+            return False
+
+        status_ok = str(data.get("status", "")).lower() == "success"
+        return not status_ok
+
+    except Exception as e:
+        logger.error(f"[{server_id}] backups__analyzer failed -> {e}")
+        return False
+
+# Формирование и отправка сообщения в Telegram
+async def backups__send_message(server_id, data):
+    logger = LOGGERS["global"] if server_id == "ALL" else LOGGERS[server_id]
+
+    def humanize_seconds(sec: int) -> str:
+        try:
+            sec = int(sec)
+        except Exception:
+            return "—"
+        if sec < 60:
+            return f"{sec} сек"
+        m, s = divmod(sec, 60)
+        return f"{m} мин {s} сек" if s else f"{m} мин"
+
+    def humanize_size(n: int | float | None) -> str:
+        try:
+            n = float(n or 0)
+        except Exception:
+            n = 0.0
+        units = ["Б", "КБ", "МБ", "ГБ", "ТБ"]
+        i = 0
+        while n >= 1024 and i < len(units) - 1:
+            n /= 1024.0
+            i += 1
+        return f"{n:.1f} {units[i]}"
+
+    try:
+        # Подготовим набор целей
+        if server_id == "ALL":
+            items = list(data.items())
+        else:
+            items = [(server_id, data)]
+
+        parts_out = []
+
+        for sid, payload in items:
+            try:
+                srv_name = escape_markdown(SERVERS[sid]["name"])
+            except Exception:
+                srv_name = escape_markdown(str(sid))
+
+            payload = payload or {}
+
+            # Статус
+            status_ok = str(payload.get("status", "")).lower() == "success"
+            status_line = "✅ *Создание резервной копии данных завершилось успешно*" if status_ok else "❌ *Создание резервной копии данных завершилось неудачно*"
+
+            # Время и длительность
+            started = str(payload.get("started_at", "")).strip()
+            finished = str(payload.get("finished_at", "")).strip()
+
+            dur_line = None
+            if started and finished:
+                try:
+                    t1 = datetime.datetime.strptime(started, "%Y-%m-%d %H:%M:%S")
+                    t2 = datetime.datetime.strptime(finished, "%Y-%m-%d %H:%M:%S")
+                    duration = max(0, int((t2 - t1).total_seconds()))
+                    dur_line = f"🕒 {t1.strftime('%d.%m.%Y %H:%M:%S')} => {escape_markdown(humanize_seconds(duration))}"
+                except Exception:
+                    dur_line = f"🕒 Старт: `{escape_markdown(started)}`, финиш: `{escape_markdown(finished)}`"
+
+            # Части (parts)
+            parts_block = []
+            parts_dict = payload.get("parts") or {}
+            if isinstance(parts_dict, dict) and parts_dict:
+                for key, info in parts_dict.items():
+                    name = "База данных" if str(key).lower() == "database" else f"Папка {escape_markdown(str(key))}"
+                    ok = bool((info or {}).get("ok"))
+                    size_b = (info or {}).get("size_bytes", 0)
+                    size_h = humanize_size(size_b)
+                    line = f"{'✅' if ok else '❌'} {name} => {escape_markdown(size_h)}"
+                    parts_block.append(line)
+            else:
+                parts_block.append("❌ Нет данных о частях бэкапа")
+
+            # Загрузка (upload)
+            up = str(payload.get("upload", "")).lower()
+            upload_line = "✅☁️ Загрузка копий в облако прошла успешно" if up == "ok" else "❌☁️ Загрузка копий в облако сорвалась"
+
+            # Собираем блок для одного сервера
+            block_lines = [f"*{srv_name}*\n", status_line]
+            if dur_line:
+                block_lines.append(dur_line)
+            block_lines.extend(parts_block)
+            block_lines.append(upload_line)
+
+            parts_out.append("\n".join(block_lines))
+
+        msg = "\n\n".join(parts_out)
+        await bot.send_message(chat_id=TG_ID, text=msg, parse_mode="MarkdownV2")
+
+    except Exception as e:
+        logger.error(f"[{server_id}] backups__send_message failed -> {e}")
+
+# Автоматический мониторинг (циклически)
+async def backups__auto_monitoring(server_id):
+    logger = LOGGERS[server_id]
+    try:
+        time_str = SERVERS[server_id]["backups"]["time"]
+        hour, minute = map(int, time_str.split(":"))
+    except Exception as e:
+        logger.error(f"[{server_id}] backups__auto_monitoring: invalid time config -> {e}")
+        return
+
+    while True:
+        now = datetime.datetime.now()
+        target = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+        if now >= target:
+            target += datetime.timedelta(days=1)
+
+        sleep_seconds = (target - now).total_seconds()
+        await asyncio.sleep(sleep_seconds)
+
+        try:
+            data = await backups__fetch_data(server_id)
+            notify = await backups__analyzer(server_id, data)
+            if notify:
+                await backups__send_message(server_id, data)
+        except Exception as e:
+            logger.error(f"[{server_id}] backups__auto_monitoring failed -> {e}")
+
+# Ручной запрос по кнопке (одноразовый)
+async def backups__manual_button(server_id):
+    logger = LOGGERS["global"] if server_id == "ALL" else LOGGERS[server_id]
+    try:
+        # ===== все сервера =====
+        if server_id == "ALL":
+            data_map = {}
+            any_data = False
+            for sid in SERVERS.keys():
+                data = await backups__fetch_data(sid)
+                if data is not None:
+                    # анализ (для логов/диагностики), уведомление шлём в любом случае
+                    await backups__analyzer(sid, data)
+                    data_map[sid] = data
+                    any_data = True
+                else:
+                    logger.warning(f"[{sid}] ❌ Не удалось получить данные о бэкапах для ручного запроса")
+            if any_data:
+                await backups__send_message("ALL", data_map)
+            else:
+                logger.warning("❌ Ручной запрос BACKUPS: ни по одному серверу данных нет")
+            return
+
+        # ===== один сервер =====
+        data = await backups__fetch_data(server_id)
+        if data is not None:
+            await backups__analyzer(server_id, data)
+            await backups__send_message(server_id, data)
+        else:
+            logger.warning(f"[{server_id}] ❌ Ручной запрос BACKUPS: данных нет")
+
+    except Exception as e:
+        logger.error(f"[{server_id}] backups__manual_button failed -> {e}")
 
 # ===== Основной код одного сервера =====
 async def monitor(server_id: str):
@@ -804,7 +989,7 @@ async def monitor(server_id: str):
         asyncio.create_task(disk__auto_monitoring(server_id)),
         asyncio.create_task(processes__fetch_data(server_id)),
         asyncio.create_task(updates__auto_monitoring(server_id)),
-        # Логика обработки бэкапов
+        asyncio.create_task(backups__auto_monitoring(server_id)),
     ]
     await asyncio.gather(*tasks)
 
