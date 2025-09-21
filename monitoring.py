@@ -162,7 +162,6 @@ async def cpu_ram__fetch_data(server_id):
 
     return None
 
-
 # Анализ полученных данных и обновление CPU_STATE
 async def cpu_ram__analizer(server_id, data):
     logger = LOGGERS[server_id]
@@ -227,7 +226,6 @@ async def cpu_ram__analizer(server_id, data):
         interval = intervals[STATUS[st["status"]]["interval_key"]]
         return interval, False
 
-
 # Формирование и отправка сообщения в Telegram
 async def cpu_ram__send_message(data_by_server):
     logger = LOGGERS["global"]
@@ -280,7 +278,6 @@ async def cpu_ram__send_message(data_by_server):
     except Exception as e:
         logger.error(f"cpu_ram__send_message failed -> {e}")
 
-
 # Автоматический мониторинг CPU/RAM (циклически)
 async def cpu_ram__auto_monitoring(server_id):
     logger = LOGGERS[server_id]
@@ -294,7 +291,6 @@ async def cpu_ram__auto_monitoring(server_id):
             logger.error(f"[{server_id}] cpu_ram__auto_monitoring failed -> {e}")
             interval = SERVERS[server_id]["cpu_ram"]["interval"][STATUS[CPU_STATE[server_id]["status"]]["interval_key"]]
         await asyncio.sleep(interval)
-
 
 # Ручной запрос CPU/RAM по кнопке (одноразовый)
 async def cpu_ram__manual_button(server_id):
@@ -349,7 +345,6 @@ async def disk__fetch_data(server_id):
 
     return None
 
-
 # Анализ полученных данных и обновление DISK_STATE
 async def disk__analyzer(server_id, data):
     logger = LOGGERS[server_id]
@@ -375,7 +370,6 @@ async def disk__analyzer(server_id, data):
     except Exception as e:
         logger.error(f"[{server_id}] disk__analyzer failed -> {e}")
         return False
-
 
 # Формирование и отправка сообщения в Telegram
 async def disk__send_message(data_by_server):
@@ -423,7 +417,6 @@ async def disk__send_message(data_by_server):
     except Exception as e:
         logger.error(f"disk__send_message failed -> {e}")
 
-
 # Автоматический мониторинг DISK (циклически)
 async def disk__auto_monitoring(server_id):
     logger = LOGGERS[server_id]
@@ -439,7 +432,6 @@ async def disk__auto_monitoring(server_id):
         except Exception as e:
             logger.error(f"[{server_id}] disk__auto_monitoring failed -> {e}")
         await asyncio.sleep(interval)
-
 
 # Ручной запрос DISK по кнопке (одноразовый)
 async def disk__manual_button(server_id):
@@ -645,7 +637,7 @@ async def processes__send_message(server_id):
 # Автоматический мониторинг (циклически)
 async def processes__auto_monitoring(server_id):
     logger = LOGGERS[server_id]
-    interval = int(SERVERS[server_id]["processes_systemctl"]["interval"])
+    interval = int(SERVERS[server_id]["processes"]["interval"])
     while True:
         try:
             data = await processes__fetch_data(server_id)
@@ -687,92 +679,131 @@ async def processes__manual_button(server_id):
     except Exception as e:
         logger.error(f"[{server_id}] processes__manual_button failed -> {e}")
 
+# ===== Обновления =====
+
 # +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
 
-# ===== Обновления =====
-async def send_update_status(server, updates=None):
-    name = server["name"]
-    if updates:
-        msg = (
-            f"📦 *{escape_markdown(name)}*\n"
-            f"🔄 Есть доступны обновления\\!\n"
-        )
-    else:
-        msg = (
-            f"📦 *{escape_markdown(name)}*\n"
-            f"✅ Обновлений нет"
-        )
+# ===== UPDATES =====
+UPDATES_STATE = {sid: {"packages": []} for sid in SERVERS}
+
+# Запрос данных об обновлениях с API сервера
+async def updates__fetch_data(server_id):
+    logger = LOGGERS[server_id]
+    srv = SERVERS[server_id]
+    url = f"{srv['base_url']}/updates?token={srv['token']}"
+    timeout = aiohttp.ClientTimeout(connect=10, sock_read=20)
 
     try:
-        await bot.send_message(chat_id=TG_ID, text=msg, parse_mode="MarkdownV2")
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            async with session.get(url) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    return data["updates"]
+                else:
+                    logger.warning(f"[{server_id}] ❌ Неверный статус ответа для UPDATES: {resp.status}")
     except Exception as e:
-        print(f"❌ Ошибка отправки сообщения об обновлениях: {e}")
-
-async def fetch_updates(server):
-    if server["type"] == "local":
-        try:
-            proc = await asyncio.create_subprocess_shell(
-                "apt list --upgradable 2>/dev/null | tail -n +2",
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE
-            )
-            stdout, _ = await proc.communicate()
-            return bool(stdout.decode().strip())
-        except Exception as e:
-            print(f"[{server['name']}] ❌ Ошибка при проверке обновлений: {e}")
-            return None
-
-    elif server["type"] == "remote":
-        try:
-            url = f'{server["base_url"]}{server["updates"]["url"]}?token={server["token"]}'
-            async with aiohttp.ClientSession() as session:
-                async with session.get(url, timeout=15) as resp:
-                    if resp.status == 200:
-                        data = await resp.json()
-                        return bool(data.get("updates"))
-        except Exception as e:
-            print(f"[{server['name']}] ❌ Ошибка при получении удалённых обновлений: {e}")
-            return None
+        logger.error(f"[{server_id}] ❌ Ошибка при запросе UPDATES: {e}")
 
     return None
 
-async def monitor_updates(server, logger):
-    if "updates" not in server:
-        return
+# Анализ полученных данных и обновление UPDATES_STATE
+async def updates__analyzer(server_id, data):
+    logger = LOGGERS[server_id]
+    state  = UPDATES_STATE[server_id]
 
-    update_time_str = server["updates"]["time"]
-    hour, minute = map(int, update_time_str.split(":"))
+    try:
+        packages = data or []
+        if not isinstance(packages, list):
+            return False
 
+        if set(packages) != set(state["packages"]):
+            state["packages"] = packages
+            return True
+
+        return False
+
+    except Exception as e:
+        logger.error(f"[{server_id}] updates__analyzer failed -> {e}")
+        return False
+
+# Формирование и отправка сообщения в Telegram
+async def updates__send_message(server_id):
+    logger = LOGGERS["global"] if server_id == "ALL" else LOGGERS[server_id]
+    try:
+        targets = SERVERS.keys() if server_id == "ALL" else [server_id]
+        parts = []
+
+        for sid in targets:
+            name     = escape_markdown(SERVERS[sid]["name"])
+            packages = UPDATES_STATE[sid].get("packages", [])
+
+            if not packages:
+                parts.append(f"*{name}*\n✅ Обновлений нет")
+                continue
+
+            pkg_lines = "\n".join(f"• `{escape_markdown(pkg)}`" for pkg in packages)
+            parts.append(f"*{name}*\n📦 Доступны обновления:\n{pkg_lines}")
+
+        msg = "\n\n".join(parts)
+        await bot.send_message(chat_id=TG_ID, text=msg, parse_mode="MarkdownV2")
+
+    except Exception as e:
+        logger.error(f"[{server_id}] updates__send_message failed -> {e}")
+
+# Автоматический мониторинг (циклически)
+async def updates__auto_monitoring(server_id):
+    logger = LOGGERS[server_id]
+    interval = int(SERVERS[server_id]["updates"]["interval"])
     while True:
-        now = datetime.datetime.now()
-        target_time = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
-
-        if now >= target_time:
-            target_time += datetime.timedelta(days=1)
-
-        sleep_seconds = (target_time - now).total_seconds()
-        await asyncio.sleep(sleep_seconds)
-
         try:
-            updates_available = await fetch_updates(server)
-            if updates_available is None:
-                logger.warning(f"[{server['name']}] ❌ Не удалось получить данные об обновлениях.")
-            elif updates_available:
-                logger.warning(f"[{server['name']}] 📦 Есть доступные обновления.")
-                await send_update_status(server, updates_available)
-            else:
-                logger.info(f"[{server['name']}] ✅ Обновлений нет.")
+            data = await updates__fetch_data(server_id)
+            changed = await updates__analyzer(server_id, data)
+            if changed:
+                await updates__send_message(server_id)
         except Exception as e:
-            logger.error(f"[{server['name']}] ❌ Ошибка при мониторинге обновлений: {e}")
+            logger.error(f"[{server_id}] updates__auto_monitoring failed -> {e}")
+        await asyncio.sleep(interval)
+
+# Ручной запрос по кнопке (одноразовый)
+async def updates__manual_button(server_id):
+    logger = LOGGERS["global"] if server_id == "ALL" else LOGGERS[server_id]
+    try:
+        # ===== все сервера =====
+        if server_id == "ALL":
+            any_data = False
+            for sid in SERVERS.keys():
+                data = await updates__fetch_data(sid)
+                if data is not None:
+                    await updates__analyzer(sid, data)
+                    any_data = True
+                else:
+                    logger.warning(f"[{sid}] ❌ Не удалось получить данные об обновлениях для ручного запроса")
+            if any_data:
+                await updates__send_message("ALL")
+            else:
+                logger.warning("❌ Ручной запрос UPDATES: ни по одному серверу данных нет")
+            return
+
+        # ===== один сервер =====
+        data = await updates__fetch_data(server_id)
+        if data is not None:
+            await updates__analyzer(server_id, data)
+            await updates__send_message(server_id)
+        else:
+            logger.warning(f"[{server_id}] ❌ Ручной запрос UPDATES: данных нет")
+
+    except Exception as e:
+        logger.error(f"[{server_id}] updates__manual_button failed -> {e}")
+
+# +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
 
 # ===== Основной код одного сервера =====
 async def monitor(server_id: str):
-    logger = LOGGERS[server_id]
     tasks = [
         asyncio.create_task(cpu_ram__auto_monitoring(server_id)),
         asyncio.create_task(disk__auto_monitoring(server_id)),
         asyncio.create_task(processes__fetch_data(server_id)),
-        asyncio.create_task(monitor_updates(server_id)),
+        asyncio.create_task(updates__auto_monitoring(server_id)),
         # Логика обработки бэкапов
     ]
     await asyncio.gather(*tasks)
