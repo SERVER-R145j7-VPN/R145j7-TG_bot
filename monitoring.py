@@ -18,7 +18,6 @@
 • Мониторинг сайтов
   - Проверка списка URL, уведомления при падении и восстановлении.
 """
-import psutil
 import asyncio
 import aiohttp
 import datetime
@@ -286,6 +285,29 @@ async def cpu_ram__auto_monitoring(server_id):
             interval, notify = await cpu_ram__analizer(server_id, data)
             if notify and data:
                 await cpu_ram__send_message({server_id: data})
+
+            st = CPU_STATE[server_id]
+            if data is not None:
+                cpu  = float(data.get("cpu", float("nan")))
+                ram  = float(data.get("ram", float("nan")))
+                load = data.get("load") or {}
+                l1   = float(load.get("1min", float("nan")))
+                l5   = float(load.get("5min", float("nan")))
+                l15  = float(load.get("15min", float("nan")))
+
+                log_line = (
+                    f"CPU-RAM: cpu={cpu:.1f} ram={ram:.1f} "
+                    f"l1={l1:.2f} l5={l5:.2f} l15={l15:.2f} "
+                    f"status={st['status']} level={st['level']} interval={interval}"
+                )
+
+                if st["status"] == "NORMAL":
+                    logger.info(log_line)
+                else:
+                    logger.warning(log_line)
+            else:
+                logger.warning("CPU-RAM: нет данных")
+
         except Exception as e:
             logger.error(f"[{server_id}] cpu_ram__auto_monitoring failed -> {e}")
             interval = SERVERS[server_id]["cpu_ram"]["interval"][STATUS[CPU_STATE[server_id]["status"]]["interval_key"]]
@@ -427,6 +449,15 @@ async def disk__auto_monitoring(server_id):
             notify = await disk__analyzer(server_id, data)
             if notify and data is not None:
                 await disk__send_message({server_id: data})
+
+            if data is not None:
+                log_line = f"DISK: usage={data:.1f}%"
+                if DISK_STATE[server_id]["alert"]:
+                    logger.warning(log_line)
+                else:
+                    logger.info(log_line)
+            else:
+                logger.warning("DISK: нет данных")
 
         except Exception as e:
             logger.error(f"[{server_id}] disk__auto_monitoring failed -> {e}")
@@ -644,6 +675,33 @@ async def processes__auto_monitoring(server_id):
             changed = await processes__analyzer(server_id, data)
             if changed:
                 await processes__send_message(server_id)
+
+            st = PROCESSES_STATE[server_id]
+            failed_raw = st.get("failed", []) or []
+            if failed_raw:
+                failed_list = []
+                for it in failed_raw:
+                    if isinstance(it, dict):
+                        name = str(it.get("name", "")).strip()
+                        src  = str(it.get("source", "")).upper().strip()
+                        failed_list.append(f"{name}({src})")
+                    else:
+                        failed_list.append(str(it))
+                logger.warning("PROCESSES FAILED: " + ", ".join(failed_list))
+            else:
+                logger.info("PROCESSES FAILED: none")
+
+            miners_raw = st.get("miners", []) or []
+            if miners_raw:
+                miners_list = []
+                for it in miners_raw:
+                    name = str(it.get("name", "")).strip()
+                    src  = str(it.get("source", "")).upper().strip()
+                    miners_list.append(f"{name}({src})")
+                logger.warning("PROCESSES MINERS: " + ", ".join(miners_list))
+            else:
+                logger.info("PROCESSES MINERS: none")
+
         except Exception as e:
             logger.error(f"[{server_id}] processes__auto_monitoring failed -> {e}")
         await asyncio.sleep(interval)
@@ -757,6 +815,13 @@ async def updates__auto_monitoring(server_id):
             changed = await updates__analyzer(server_id, data)
             if changed:
                 await updates__send_message(server_id)
+
+            packages = UPDATES_STATE[server_id]["packages"]
+            if packages:
+                logger.warning("UPDATES: " + ", ".join(packages))
+            else:
+                logger.info("UPDATES: none")    
+
         except Exception as e:
             logger.error(f"[{server_id}] updates__auto_monitoring failed -> {e}")
         await asyncio.sleep(interval)
@@ -945,6 +1010,12 @@ async def backups__auto_monitoring(server_id):
             notify = await backups__analyzer(server_id, data)
             if notify:
                 await backups__send_message(server_id, data)
+
+            if data:
+                logger.info(f"BACKUPS: {data}")
+            else:
+                logger.warning("BACKUPS: нет данных")
+
         except Exception as e:
             logger.error(f"[{server_id}] backups__auto_monitoring failed -> {e}")
 
@@ -984,21 +1055,37 @@ async def backups__manual_button(server_id):
 
 # ===== Основной код одного сервера =====
 async def monitor(server_id: str):
-    tasks = [
-        asyncio.create_task(cpu_ram__auto_monitoring(server_id)),
-        asyncio.create_task(disk__auto_monitoring(server_id)),
-        asyncio.create_task(processes__fetch_data(server_id)),
-        asyncio.create_task(updates__auto_monitoring(server_id)),
-        asyncio.create_task(backups__auto_monitoring(server_id)),
-    ]
+    logger = LOGGERS[server_id]
+    logger.info("=== START MONITORING ===")
+
+    tasks = []
+
+    def start_task(coro, name):
+        try:
+            t = asyncio.create_task(coro)
+            tasks.append(t)
+            logger.info(f"✓ Task started: {name}")
+        except Exception as e:
+            logger.error(f"❌ Failed to start task {name}: {e}")
+
+    start_task(cpu_ram__auto_monitoring(server_id), "cpu_ram")
+    start_task(disk__auto_monitoring(server_id), "disk")
+    start_task(processes__auto_monitoring(server_id), "processes")
+    start_task(updates__auto_monitoring(server_id), "updates")
+    start_task(backups__auto_monitoring(server_id), "backups")
+
     await asyncio.gather(*tasks)
 
-# 🚀 ===== Запуск мониторинга =====
+# ===== Запуск мониторинга =====
 async def main():
     print("🚀 Мониторинг запущен...")
     init_loggers()
+    LOGGERS["global"].info("=== START GLOBAL MONITORING ===")
+
     tasks = [monitor(server_id) for server_id in SERVERS.keys()]
     tasks.append(monitor_sites())
+    LOGGERS["global"].info(f"Мониторинг запущен для серверов: {', '.join(SERVERS.keys())}")
+
     await asyncio.gather(*tasks)
 
 if __name__ == "__main__":
