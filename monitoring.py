@@ -238,7 +238,7 @@ async def cpu_ram__analizer(server_id, data):
         return interval, False
 
 # Формирование и отправка сообщения в Telegram
-async def cpu_ram__send_message(data_by_server):
+async def cpu_ram__send_message(data_by_server, edit_to: tuple[int, int] | None = None):
     logger = LOGGERS["global"]
     try:
         if not data_by_server:
@@ -288,6 +288,19 @@ async def cpu_ram__send_message(data_by_server):
         if b is None:
             logger.error("Bot instance is not set. Call set_bot() from bot.py first.")
             return
+
+        if edit_to:
+            try:
+                await b.edit_message_text(
+                    chat_id=edit_to[0],
+                    message_id=edit_to[1],
+                    text=msg,
+                    parse_mode="MarkdownV2",
+                )
+                return
+            except Exception as e:
+                logger.warning(f"edit_message_text failed -> {e}; fallback to send")
+
         await b.send_message(chat_id=TG_ID, text=msg, parse_mode="MarkdownV2")
 
     except Exception as e:
@@ -336,6 +349,17 @@ async def cpu_ram__auto_monitoring(server_id):
 async def cpu_ram__manual_button(server_id):
     logger = LOGGERS["global"] if server_id == "ALL" else LOGGERS[server_id]
     try:
+        try:
+            placeholder = await bot.send_message(
+                chat_id=TG_ID,
+                text="⏳ Ожидание данных. . .",
+                parse_mode="MarkdownV2",
+            )
+            edit_to = (placeholder.chat.id, placeholder.message_id)
+        except Exception as e:
+            logger.warning(f"cpu_ram__manual_button: placeholder send failed -> {e}")
+            edit_to = None
+
         # ===== все сервера =====
         if server_id == "ALL":
             data_map = {}
@@ -346,7 +370,7 @@ async def cpu_ram__manual_button(server_id):
                 else:
                     logger.warning(f"[{sid}] ❌ Не удалось получить CPU/RAM для ручного запроса")
             if data_map:
-                await cpu_ram__send_message(data_map)
+                await cpu_ram__send_message(data_map, edit_to=edit_to)
             else:
                 logger.warning("❌ Ручной запрос CPU/RAM: ни по одному серверу данных нет")
             return
@@ -354,7 +378,7 @@ async def cpu_ram__manual_button(server_id):
         # ===== один сервер =====
         data = await cpu_ram__fetch_data(server_id)
         if data:
-            await cpu_ram__send_message({server_id: data})
+            await cpu_ram__send_message({server_id: data}, edit_to=edit_to)
         else:
             logger.warning(f"[{server_id}] ❌ Ручной запрос CPU/RAM: данных нет")
 
@@ -412,7 +436,7 @@ async def disk__analyzer(server_id, data):
         return False
 
 # Формирование и отправка сообщения в Telegram
-async def disk__send_message(data_by_server):
+async def disk__send_message(data_by_server, edit_to: tuple[int, int] | None = None):
     logger = LOGGERS["global"]
     try:
         if not data_by_server:
@@ -456,6 +480,19 @@ async def disk__send_message(data_by_server):
         if b is None:
             logger.error("Bot instance is not set. Call set_bot() from bot.py first.")
             return
+
+        if edit_to:
+            try:
+                await b.edit_message_text(
+                    chat_id=edit_to[0],
+                    message_id=edit_to[1],
+                    text=msg,
+                    parse_mode="MarkdownV2",
+                )
+                return
+            except Exception as e:
+                logger.warning(f"edit_message_text failed -> {e}; fallback to send")
+
         await b.send_message(chat_id=TG_ID, text=msg, parse_mode="MarkdownV2")
 
     except Exception as e:
@@ -492,6 +529,18 @@ async def disk__auto_monitoring(server_id):
 async def disk__manual_button(server_id):
     logger = LOGGERS["global"] if server_id == "ALL" else LOGGERS[server_id]
     try:
+        # плейсхолдер "ожидание"
+        try:
+            placeholder = await bot.send_message(
+                chat_id=TG_ID,
+                text="⏳ Ожидание данных. . .",
+                parse_mode="MarkdownV2",
+            )
+            edit_to = (placeholder.chat.id, placeholder.message_id)
+        except Exception as e:
+            logger.warning(f"disk__manual_button: placeholder send failed -> {e}")
+            edit_to = None
+
         # ===== все сервера =====
         if server_id == "ALL":
             data_map = {}
@@ -502,7 +551,7 @@ async def disk__manual_button(server_id):
                 else:
                     logger.warning(f"[{sid}] ❌ Не удалось получить данные о диске для ручного запроса")
             if data_map:
-                await disk__send_message(data_map)
+                await disk__send_message(data_map, edit_to=edit_to)
             else:
                 logger.warning("❌ Ручной запрос DISK: ни по одному серверу данных нет")
             return
@@ -510,7 +559,7 @@ async def disk__manual_button(server_id):
         # ===== один сервер =====
         data = await disk__fetch_data(server_id)
         if data is not None:
-            await disk__send_message({server_id: data})
+            await disk__send_message({server_id: data}, edit_to=edit_to)
         else:
             logger.warning(f"[{server_id}] ❌ Ручной запрос DISK: данных нет")
 
@@ -622,7 +671,7 @@ async def processes__analyzer(server_id, data):
         return False
 
 # Формирование и отправка сообщения в Telegram
-async def processes__send_message(server_id):
+async def processes__send_message(server_id, edit_to: tuple[int, int] | None = None):
     logger = LOGGERS["global"] if server_id == "ALL" else LOGGERS[server_id]
     try:
         targets = SERVERS.keys() if server_id == "ALL" else [server_id]
@@ -689,6 +738,19 @@ async def processes__send_message(server_id):
         if b is None:
             logger.error("Bot instance is not set. Call set_bot() from bot.py first.")
             return
+
+        if edit_to:
+            try:
+                await b.edit_message_text(
+                    chat_id=edit_to[0],
+                    message_id=edit_to[1],
+                    text=msg,
+                    parse_mode="MarkdownV2",
+                )
+                return
+            except Exception as e:
+                logger.warning(f"edit_message_text failed -> {e}; fallback to send")
+
         await b.send_message(chat_id=TG_ID, text=msg, parse_mode="MarkdownV2")
 
     except Exception as e:
@@ -740,10 +802,26 @@ async def processes__auto_monitoring(server_id):
             logger.error(f"[{server_id}] processes__auto_monitoring failed -> {e}")
         await asyncio.sleep(interval)
 
-# Ручной запрос по кнопке (одноразовый)
+# Ручной запрос PROCESSES по кнопке (одноразовый)
 async def processes__manual_button(server_id):
     logger = LOGGERS["global"] if server_id == "ALL" else LOGGERS[server_id]
     try:
+        try:
+            b = bot
+            if b is None:
+                logger.error("Bot instance is not set. Call set_bot() from bot.py first.")
+                edit_to = None
+            else:
+                placeholder = await b.send_message(
+                    chat_id=TG_ID,
+                    text="⏳ Ожидание данных. . .",
+                    parse_mode="MarkdownV2",
+                )
+                edit_to = (placeholder.chat.id, placeholder.message_id)
+        except Exception as e:
+            logger.warning(f"processes__manual_button: placeholder send failed -> {e}")
+            edit_to = None
+
         # ===== все сервера =====
         if server_id == "ALL":
             any_data = False
@@ -755,7 +833,7 @@ async def processes__manual_button(server_id):
                 else:
                     logger.warning(f"[{sid}] ❌ Не удалось получить данные о процессах для ручного запроса")
             if any_data:
-                await processes__send_message("ALL")
+                await processes__send_message("ALL", edit_to=edit_to)
             else:
                 logger.warning("❌ Ручной запрос PROCESS: ни по одному серверу данных нет")
             return
@@ -764,7 +842,7 @@ async def processes__manual_button(server_id):
         data = await processes__fetch_data(server_id)
         if data is not None:
             await processes__analyzer(server_id, data)
-            await processes__send_message(server_id)
+            await processes__send_message(server_id, edit_to=edit_to)
         else:
             logger.warning(f"[{server_id}] ❌ Ручной запрос PROCESS: данных нет")
 
@@ -816,7 +894,7 @@ async def updates__analyzer(server_id, data):
         return False
 
 # Формирование и отправка сообщения в Telegram
-async def updates__send_message(server_id):
+async def updates__send_message(server_id, edit_to: tuple[int, int] | None = None):
     logger = LOGGERS["global"] if server_id == "ALL" else LOGGERS[server_id]
     try:
         targets = SERVERS.keys() if server_id == "ALL" else [server_id]
@@ -838,6 +916,19 @@ async def updates__send_message(server_id):
         if b is None:
             logger.error("Bot instance is not set. Call set_bot() from bot.py first.")
             return
+
+        if edit_to:
+            try:
+                await b.edit_message_text(
+                    chat_id=edit_to[0],
+                    message_id=edit_to[1],
+                    text=msg,
+                    parse_mode="MarkdownV2",
+                )
+                return
+            except Exception as e:
+                logger.warning(f"edit_message_text failed -> {e}; fallback to send")
+
         await b.send_message(chat_id=TG_ID, text=msg, parse_mode="MarkdownV2")
 
     except Exception as e:
@@ -864,10 +955,27 @@ async def updates__auto_monitoring(server_id):
             logger.error(f"[{server_id}] updates__auto_monitoring failed -> {e}")
         await asyncio.sleep(interval)
 
-# Ручной запрос по кнопке (одноразовый)
+# Ручной запрос UPDATES по кнопке (одноразовый)
 async def updates__manual_button(server_id):
     logger = LOGGERS["global"] if server_id == "ALL" else LOGGERS[server_id]
     try:
+        # плейсхолдер "ожидание"
+        try:
+            b = bot
+            if b is None:
+                logger.error("Bot instance is not set. Call set_bot() from bot.py first.")
+                edit_to = None
+            else:
+                placeholder = await b.send_message(
+                    chat_id=TG_ID,
+                    text="⏳ Ожидание данных. . .",
+                    parse_mode="MarkdownV2",
+                )
+                edit_to = (placeholder.chat.id, placeholder.message_id)
+        except Exception as e:
+            logger.warning(f"updates__manual_button: placeholder send failed -> {e}")
+            edit_to = None
+
         # ===== все сервера =====
         if server_id == "ALL":
             any_data = False
@@ -879,7 +987,7 @@ async def updates__manual_button(server_id):
                 else:
                     logger.warning(f"[{sid}] ❌ Не удалось получить данные об обновлениях для ручного запроса")
             if any_data:
-                await updates__send_message("ALL")
+                await updates__send_message("ALL", edit_to=edit_to)
             else:
                 logger.warning("❌ Ручной запрос UPDATES: ни по одному серверу данных нет")
             return
@@ -888,7 +996,7 @@ async def updates__manual_button(server_id):
         data = await updates__fetch_data(server_id)
         if data is not None:
             await updates__analyzer(server_id, data)
-            await updates__send_message(server_id)
+            await updates__send_message(server_id, edit_to=edit_to)
         else:
             logger.warning(f"[{server_id}] ❌ Ручной запрос UPDATES: данных нет")
 
@@ -931,7 +1039,7 @@ async def backups__analyzer(server_id, data):
         return False
 
 # Формирование и отправка сообщения в Telegram
-async def backups__send_message(server_id, data):
+async def backups__send_message(server_id, data, edit_to: tuple[int, int] | None = None):
     logger = LOGGERS["global"] if server_id == "ALL" else LOGGERS[server_id]
 
     def humanize_seconds(sec: int) -> str:
@@ -1023,6 +1131,19 @@ async def backups__send_message(server_id, data):
         if b is None:
             logger.error("Bot instance is not set. Call set_bot() from bot.py first.")
             return
+
+        if edit_to:
+            try:
+                await b.edit_message_text(
+                    chat_id=edit_to[0],
+                    message_id=edit_to[1],
+                    text=msg,
+                    parse_mode="MarkdownV2",
+                )
+                return
+            except Exception as e:
+                logger.warning(f"edit_message_text failed -> {e}; fallback to send")
+
         await b.send_message(chat_id=TG_ID, text=msg, parse_mode="MarkdownV2")
 
     except Exception as e:
@@ -1066,6 +1187,23 @@ async def backups__auto_monitoring(server_id):
 async def backups__manual_button(server_id):
     logger = LOGGERS["global"] if server_id == "ALL" else LOGGERS[server_id]
     try:
+        # плейсхолдер "ожидание"
+        try:
+            b = bot
+            if b is None:
+                logger.error("Bot instance is not set. Call set_bot() from bot.py first.")
+                edit_to = None
+            else:
+                placeholder = await b.send_message(
+                    chat_id=TG_ID,
+                    text="⏳ Ожидание данных. . .",
+                    parse_mode="MarkdownV2",
+                )
+                edit_to = (placeholder.chat.id, placeholder.message_id)
+        except Exception as e:
+            logger.warning(f"backups__manual_button: placeholder send failed -> {e}")
+            edit_to = None
+
         # ===== все сервера =====
         if server_id == "ALL":
             data_map = {}
@@ -1080,7 +1218,7 @@ async def backups__manual_button(server_id):
                 else:
                     logger.warning(f"[{sid}] ❌ Не удалось получить данные о бэкапах для ручного запроса")
             if any_data:
-                await backups__send_message("ALL", data_map)
+                await backups__send_message("ALL", data_map, edit_to=edit_to)
             else:
                 logger.warning("❌ Ручной запрос BACKUPS: ни по одному серверу данных нет")
             return
@@ -1089,7 +1227,7 @@ async def backups__manual_button(server_id):
         data = await backups__fetch_data(server_id)
         if data is not None:
             await backups__analyzer(server_id, data)
-            await backups__send_message(server_id, data)
+            await backups__send_message(server_id, data, edit_to=edit_to)
         else:
             logger.warning(f"[{server_id}] ❌ Ручной запрос BACKUPS: данных нет")
 
