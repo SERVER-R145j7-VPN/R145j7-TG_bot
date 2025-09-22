@@ -352,7 +352,7 @@ async def cpu_ram__manual_button(server_id):
         try:
             placeholder = await bot.send_message(
                 chat_id=TG_ID,
-                text="⏳ Ожидание данных. . .",
+                text="⏳ Ожидание данных",
                 parse_mode="MarkdownV2",
             )
             edit_to = (placeholder.chat.id, placeholder.message_id)
@@ -533,7 +533,7 @@ async def disk__manual_button(server_id):
         try:
             placeholder = await bot.send_message(
                 chat_id=TG_ID,
-                text="⏳ Ожидание данных. . .",
+                text="⏳ Ожидание данных",
                 parse_mode="MarkdownV2",
             )
             edit_to = (placeholder.chat.id, placeholder.message_id)
@@ -814,7 +814,7 @@ async def processes__manual_button(server_id):
             else:
                 placeholder = await b.send_message(
                     chat_id=TG_ID,
-                    text="⏳ Ожидание данных. . .",
+                    text="⏳ Ожидание данных",
                     parse_mode="MarkdownV2",
                 )
                 edit_to = (placeholder.chat.id, placeholder.message_id)
@@ -968,7 +968,7 @@ async def updates__manual_button(server_id):
             else:
                 placeholder = await b.send_message(
                     chat_id=TG_ID,
-                    text="⏳ Ожидание данных. . .",
+                    text="⏳ Ожидание данных",
                     parse_mode="MarkdownV2",
                 )
                 edit_to = (placeholder.chat.id, placeholder.message_id)
@@ -1196,7 +1196,7 @@ async def backups__manual_button(server_id):
             else:
                 placeholder = await b.send_message(
                     chat_id=TG_ID,
-                    text="⏳ Ожидание данных. . .",
+                    text="⏳ Ожидание данных",
                     parse_mode="MarkdownV2",
                 )
                 edit_to = (placeholder.chat.id, placeholder.message_id)
