@@ -1102,14 +1102,18 @@ async def backups__send_message(server_id, data, edit_to: tuple[int, int] | None
             # Части (parts)
             parts_block = []
             parts_dict = payload.get("parts") or {}
+            total_size_b = 0
             if isinstance(parts_dict, dict) and parts_dict:
                 for key, info in parts_dict.items():
                     name = "База данных" if str(key).lower() == "database" else f"Папка {escape_markdown(str(key))}"
                     ok = bool((info or {}).get("ok"))
                     size_b = (info or {}).get("size_bytes", 0)
+                    total_size_b += size_b
                     size_h = humanize_size(size_b)
                     line = f"{'✅' if ok else '❌'} {name} \\=\\> {escape_markdown(size_h)}"
                     parts_block.append(line)
+                total_size_h = humanize_size(total_size_b)
+                parts_block.append(f"📦 Общий размер бэкапа: {escape_markdown(total_size_h)}")
             else:
                 parts_block.append("❌ Нет данных о частях бэкапа")
 
@@ -1118,7 +1122,7 @@ async def backups__send_message(server_id, data, edit_to: tuple[int, int] | None
             upload_line = "✅☁️ Загрузка копий в облако прошла успешно" if up == "ok" else "❌☁️ Загрузка копий в облако сорвалась"
 
             # Собираем блок для одного сервера
-            block_lines = [f"*{srv_name}*\n", status_line]
+            block_lines = [f"*{srv_name}*", status_line]
             if dur_line:
                 block_lines.append(dur_line)
             block_lines.extend(parts_block)
