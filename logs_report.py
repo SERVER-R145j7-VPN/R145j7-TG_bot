@@ -6,18 +6,14 @@
 — Формируем MarkdownV2: заголовок папки, под ним строки по файлам:
     • file.log — ⚠️ N | ❌ M   или   • file.log — ✅
 """
-import re
+
 import os
 import logging
 from aiogram.types import Message
 from config import LOG_DIRS
+from utils import escape_markdown
 
 logger = logging.getLogger("bot")
-
-# Локальная экранилка под MarkdownV2, чтобы не тянуть зависимости и не ловить  "can't parse entities"
-def _escape_md(text: str) -> str:
-    return re.sub(r'([_*[\]()~`>#+=|{}.!-])', r'\\\1', str(text))
-
 
 async def handle_logs_command(message: Message) -> None:
     """
@@ -35,7 +31,7 @@ async def handle_logs_command(message: Message) -> None:
 
         for group_name, dir_path in LOG_DIRS.items():
             # Заголовок группы
-            header = f"*{_escape_md(group_name)}*"
+            header = f"*{escape_markdown(group_name)}*"
             lines.append(header)
 
             dir_path = os.path.abspath(dir_path)
@@ -78,7 +74,7 @@ async def handle_logs_command(message: Message) -> None:
                                 err_cnt += 1
                 except Exception as e:
                     logger.error(f"/logs: ошибка чтения файла '{fpath}': {e}")
-                    lines.append(f"• `{_escape_md(fname)}` — _ошибка чтения_")
+                    lines.append(f"• `{escape_markdown(fname)}` — _ошибка чтения_")
                     continue
 
                 if warn_cnt == 0 and err_cnt == 0:
@@ -86,7 +82,7 @@ async def handle_logs_command(message: Message) -> None:
                 else:
                     status = f"⚠️ {warn_cnt} \\| ❌ {err_cnt}"
 
-                lines.append(f"• `{_escape_md(fname)}` — {status}")
+                lines.append(f"• `{escape_markdown(fname)}` — {status}")
 
             lines.append("")  # пустая строка между группами
 

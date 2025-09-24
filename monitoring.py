@@ -23,10 +23,9 @@ import aiohttp
 import datetime
 from config import TG_ID, SERVERS, SITES_MONITOR, MINERS
 from aiogram import Bot
-import os
-import re
 import ssl
 import logging
+from utils import escape_markdown
 
 # ===== Бот берём извне (из bot.py) =====
 from typing import Optional
@@ -36,10 +35,6 @@ bot: Optional[Bot] = None
 def set_bot(external_bot: Bot) -> None:
     global bot
     bot = external_bot
-
-# ===== Правка сообщений для Телеграм =====
-def escape_markdown(text: str) -> str:
-    return re.sub(r'([_*[\]()~`>#+=|{}.!-])', r'\\\1', str(text))
 
 # ===== Мониторинг сайтов =====
 async def send_site_status(type, msg: str):
