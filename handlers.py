@@ -17,9 +17,6 @@ from monitoring import (
 
 CATEGORIES = ["cpu_ram", "disk", "processes", "updates", "backups", "sites"]
 
-def is_authorized(user_id: int) -> bool:
-    return user_id == TG_ID
-
 def build_main_menu():
     buttons = [[InlineKeyboardButton(text=cat.upper(), callback_data=f"cat:{cat}")] for cat in CATEGORIES]
     return InlineKeyboardMarkup(inline_keyboard=buttons)
@@ -36,9 +33,6 @@ def build_servers_menu(category: str):
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 async def handle_command_servers(message: Message):
-    if not is_authorized(message.from_user.id):
-        await message.answer("⛔ Нет доступа.")
-        return
 
     try:
         await message.delete()
@@ -48,9 +42,6 @@ async def handle_command_servers(message: Message):
     await message.answer("📂 Выберите категорию:", reply_markup=build_main_menu())
 
 async def handle_callback_server(callback: CallbackQuery):
-    if not is_authorized(callback.from_user.id):
-        await callback.answer("⛔ Нет доступа.", show_alert=True)
-        return
 
     await callback.message.delete()
     data = callback.data
