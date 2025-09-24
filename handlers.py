@@ -5,7 +5,7 @@
 """
 import logging
 from aiogram.types import Message, CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup
-from config import SERVERS, SITES_MONITOR
+from config import CATEGORIES, SERVERS, SITES_MONITOR
 from monitoring import (
     cpu_ram__manual_button,
     disk__manual_button,
@@ -18,10 +18,8 @@ from monitoring import (
 
 logger = logging.getLogger('bot')
 
-CATEGORIES = ["cpu_ram", "disk", "processes", "updates", "backups", "sites"]
-
 def build_main_menu():
-    buttons = [[InlineKeyboardButton(text=cat.upper(), callback_data=f"cat:{cat}")] for cat in CATEGORIES]
+    buttons = [[InlineKeyboardButton(text=name, callback_data=f"cat:{cat}")] for cat, name in CATEGORIES.items()]
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 def build_servers_menu(category: str):
@@ -81,8 +79,9 @@ async def handle_callback_server(callback: CallbackQuery):
                 logger.error('handle_callback_server: sites block failed: %s', e)
         else:
             try:
+                label = CATEGORIES.get(category, category.upper())
                 await callback.message.answer(
-                    f"📡 Выберите сервер для {escape_markdown(category.upper())}:",
+                    f"📡 Выберите сервер для {escape_markdown(label)}:",
                     reply_markup=build_servers_menu(category)
                 )
             except Exception as e:
