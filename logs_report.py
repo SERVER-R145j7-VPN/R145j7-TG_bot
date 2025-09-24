@@ -16,7 +16,6 @@ from utils import escape_markdown
 logger = logging.getLogger("bot")
 
 async def handle_logs_command(message: Message) -> None:
-    # Удаление команды /logs
     try:
         await message.delete()
     except Exception:
@@ -26,7 +25,6 @@ async def handle_logs_command(message: Message) -> None:
         lines: list[str] = []
 
         for group_name, dir_path in LOG_DIRS.items():
-            # Заголовок группы
             header = f"*{escape_markdown(group_name)}*"
             lines.append(header)
 
@@ -36,7 +34,6 @@ async def handle_logs_command(message: Message) -> None:
                 lines.append("")
                 continue
 
-            # собираем только *.log (текущие файлы), ротационные архивы пропускаем
             try:
                 entries = sorted(
                     [f for f in os.listdir(dir_path) if f.endswith(".log")],
@@ -62,7 +59,6 @@ async def handle_logs_command(message: Message) -> None:
                 try:
                     with open(fpath, "r", encoding="utf-8", errors="replace") as fh:
                         for line in fh:
-                            # строго ищем маркеры в строке
                             if "[WARNING]" in line:
                                 warn_cnt += 1
                             if "[ERROR]" in line:
@@ -78,12 +74,9 @@ async def handle_logs_command(message: Message) -> None:
                     status = f"⚠️ {warn_cnt} \\| ❌ {err_cnt}"
 
                 lines.append(f"• `{escape_markdown(fname)}` — {status}")
-
             lines.append("")
-
         text = "\n".join(lines).rstrip()
 
-        # отправляем отчёт в чат
         await message.bot.send_message(
             chat_id=message.chat.id,
             text=text if text else "_(пусто)_",
@@ -91,7 +84,6 @@ async def handle_logs_command(message: Message) -> None:
         )
 
     except Exception as e:
-        # в случае падения — логируем в переданный логгер и отправляем краткую ошибку в чат
         try:
             logger.error(f"/logs failed -> {e}")
         finally:
