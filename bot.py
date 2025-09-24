@@ -50,7 +50,7 @@ async def handle_servers(message: Message):
     await handle_command_servers(message)
 
 async def handle_logs(message: Message):
-    await handle_logs_command(message)
+    await handle_logs_command(message, logger)
 
 async def handle_callback(callback: CallbackQuery):
     await handle_callback_server(callback)
