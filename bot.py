@@ -9,17 +9,19 @@
 import os
 import asyncio
 import logging
+from typing import Union
 from logging.handlers import TimedRotatingFileHandler
 from aiogram import Bot, Dispatcher
 from aiogram.types import Message, CallbackQuery
 from aiogram.filters import Command
 from aiogram.client.default import DefaultBotProperties
 from contextlib import suppress
-
-from config import BOT_TOKEN, SERVERS
+from config import BOT_TOKEN, SERVERS, TG_ID
 from monitoring import monitor, monitor_sites, set_bot
 from handlers import handle_command_servers, handle_callback_server
 from logs_report import handle_logs_command
+
+BOT_VERSION = "2.1.0"
 
 # ===== 🔧 Логирование =====
 # Создание папок для логов
@@ -123,23 +125,64 @@ for sid, cfg in SERVERS.items():
     if console_handler not in srv_logger.handlers:
         srv_logger.addHandler(console_handler)
 
+# --- Проверка доступа ---
+async def deny_if_unauthorized(obj: Union[Message, CallbackQuery]) -> bool:
+    user = obj.from_user
+    uid = getattr(user, "id", None)
+    if uid == TG_ID:
+        return False
+
+    uname = f"@{getattr(user, 'username', '')}" if getattr(user, "username", None) else "-"
+    fname = getattr(user, "first_name", "-")
+
+    # --- что именно сделал пользователь ---
+    if isinstance(obj, Message):
+        action = obj.text or "<non-text message>"
+    else:  # CallbackQuery
+        action = obj.data or "<no callback data>"
+
+    access_logger.warning("DENY: uid=%s user=%s %s action=%r", uid, uname, fname, action)
+
+    try:
+        if isinstance(obj, Message):
+            await obj.answer("⛔ ДОСТУП ЗАБЛОКИРОВАН ⛔")
+        else:
+            await obj.answer("⛔ ДОСТУП ЗАБЛОКИРОВАН ⛔", show_alert=True)
+    except Exception as e:
+        access_logger.error("deny_if_unauthorized: notify failed: %s", e)
+    return True
+
+# Хэндлер команд
+async def handle_version(message: Message):
+    if await deny_if_unauthorized(message):
+        return
+    await message.answer(f"🤖 Bot R145j7 version `{BOT_VERSION}`", parse_mode="MarkdownV2")
+
 async def handle_servers(message: Message):
+    if await deny_if_unauthorized(message):
+        return
     await handle_command_servers(message)
 
 async def handle_logs(message: Message):
+    if await deny_if_unauthorized(message):
+        return
     await handle_logs_command(message)
 
+# Хэндлер callback-запросов
 async def handle_callback(callback: CallbackQuery):
+    if await deny_if_unauthorized(callback):
+        return
     await handle_callback_server(callback)
 
 async def main():
-    bot_logger.info("Bot R145j7 is starting...")
+    bot_logger.info(f"Bot R145j7 v{BOT_VERSION} is starting...")
 
     async with Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode="MarkdownV2")) as bot:
         set_bot(bot)
         dp = Dispatcher()
 
         # Регистрация хэндлеров (без декораторов)
+        dp.message.register(handle_version, Command("version"))
         dp.message.register(handle_servers, Command("server"))
         dp.message.register(handle_logs, Command("logs"))
         dp.callback_query.register(handle_callback)
