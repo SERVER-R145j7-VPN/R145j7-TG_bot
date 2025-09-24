@@ -21,6 +21,8 @@ from monitoring import monitor, monitor_sites, set_bot
 from handlers import handle_command_servers, handle_callback_server
 from logs_report import handle_logs_command
 
+BOT_VERSION = "2.1.0"
+
 # ===== 🔧 Логирование =====
 # Создание папок для логов
 os.makedirs("logs/bot", exist_ok=True)
@@ -132,14 +134,18 @@ async def handle_logs(message: Message):
 async def handle_callback(callback: CallbackQuery):
     await handle_callback_server(callback)
 
+async def handle_version(message: Message):
+    await message.answer(f"🤖 Bot R145j7 version {BOT_VERSION}")
+
 async def main():
-    bot_logger.info("Bot R145j7 is starting...")
+    bot_logger.info(f"Bot R145j7 v{BOT_VERSION} is starting...")
 
     async with Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode="MarkdownV2")) as bot:
         set_bot(bot)
         dp = Dispatcher()
 
         # Регистрация хэндлеров (без декораторов)
+        dp.message.register(handle_version, Command("version"))
         dp.message.register(handle_servers, Command("server"))
         dp.message.register(handle_logs, Command("logs"))
         dp.callback_query.register(handle_callback)
