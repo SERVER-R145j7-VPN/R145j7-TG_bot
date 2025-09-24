@@ -18,6 +18,7 @@ from contextlib import suppress
 from config import BOT_TOKEN, SERVERS
 from monitoring import monitor, monitor_sites, init_loggers, set_bot
 from handlers import handle_command_servers, handle_callback_server
+from logs_report import handle_logs_command
 
 # 🔧 Логирование
 os.makedirs("logs/bot", exist_ok=True)
@@ -48,6 +49,9 @@ access_logger.addHandler(access_file_handler)
 async def handle_servers(message: Message):
     await handle_command_servers(message)
 
+async def handle_logs(message: Message):
+    await handle_logs_command(message)
+
 async def handle_callback(callback: CallbackQuery):
     await handle_callback_server(callback)
 
@@ -62,6 +66,7 @@ async def main():
 
         # Регистрация хэндлеров (без декораторов)
         dp.message.register(handle_servers, Command("server"))
+        dp.message.register(handle_logs, Command("logs"))
         dp.callback_query.register(handle_callback)
 
         # Фоновые задачи
