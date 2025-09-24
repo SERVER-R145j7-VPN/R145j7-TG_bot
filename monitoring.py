@@ -18,47 +18,15 @@
 • Мониторинг сайтов
   - Проверка списка URL, уведомления при падении и восстановлении.
 """
+
 import asyncio
 import aiohttp
 import datetime
 from config import TG_ID, SERVERS, SITES_MONITOR, MINERS
 from aiogram import Bot
-import os
-import re
 import ssl
 import logging
-from logging.handlers import TimedRotatingFileHandler
-
-# ===== Логгер ===== 
-def get_server_logger(server_id: str):
-    os.makedirs("logs/monitoring", exist_ok=True)
-    logger = logging.getLogger(f"monitoring.{server_id}")
-    logger.setLevel(logging.INFO)
-    logger.propagate = False
-
-    if not logger.handlers:
-        file_handler = TimedRotatingFileHandler(
-            filename=f"logs/monitoring/{server_id}.log",
-            when="midnight",
-            interval=1,
-            backupCount=7,
-            encoding="utf-8"
-        )
-        formatter = logging.Formatter("%(asctime)s [%(levelname)s] %(message)s")
-        file_handler.setFormatter(formatter)
-        logger.addHandler(file_handler)
-
-    return logger
-
-# ===== Глобальные логгеры =====
-LOGGERS: dict[str, logging.Logger] = {}
-
-def init_loggers():
-    # серверные логгеры
-    for sid in SERVERS.keys():
-        LOGGERS[sid] = get_server_logger(sid)
-    LOGGERS["sites"] = get_server_logger("sites")
-    LOGGERS["global"] = get_server_logger("global")
+from utils import escape_markdown
 
 # ===== Бот берём извне (из bot.py) =====
 from typing import Optional
@@ -68,10 +36,6 @@ bot: Optional[Bot] = None
 def set_bot(external_bot: Bot) -> None:
     global bot
     bot = external_bot
-
-# ===== Правка сообщений для Телеграм =====
-def escape_markdown(text: str) -> str:
-    return re.sub(r'([_*[\]()~`>#+=|{}.!-])', r'\\\1', str(text))
 
 # ===== Мониторинг сайтов =====
 async def send_site_status(type, msg: str):
@@ -106,7 +70,7 @@ async def check_single_site(url):
         return False
 
 async def monitor_sites():
-    logger = LOGGERS["sites"]
+    logger = logging.getLogger("sites_monitoring")
 
     interval = int(SITES_MONITOR.get("interval", 3600))
     interval = max(30, interval)
@@ -156,7 +120,7 @@ STATUS = {
 
 # Запрос данных о CPU/RAM с API сервера
 async def cpu_ram__fetch_data(server_id):
-    logger = LOGGERS[server_id]
+    logger = logging.getLogger(server_id)
     srv = SERVERS[server_id]
     url = f"{srv['base_url']}/cpu_ram?token={srv['token']}"
     timeout = aiohttp.ClientTimeout(connect=10, sock_read=20)
@@ -175,7 +139,7 @@ async def cpu_ram__fetch_data(server_id):
 
 # Анализ полученных данных и обновление CPU_STATE
 async def cpu_ram__analizer(server_id, data):
-    logger = LOGGERS[server_id]
+    logger = logging.getLogger(server_id)
     srv = SERVERS[server_id]
     cfg = srv["cpu_ram"]
     intervals = cfg["interval"]
@@ -239,7 +203,7 @@ async def cpu_ram__analizer(server_id, data):
 
 # Формирование и отправка сообщения в Telegram
 async def cpu_ram__send_message(data_by_server, edit_to: tuple[int, int] | None = None):
-    logger = LOGGERS["global"]
+    logger = logging.getLogger("global_monitoring")
     try:
         if not data_by_server:
             logger.error("cpu_ram__send_message: empty data")
@@ -308,7 +272,7 @@ async def cpu_ram__send_message(data_by_server, edit_to: tuple[int, int] | None 
 
 # Автоматический мониторинг CPU/RAM (циклически)
 async def cpu_ram__auto_monitoring(server_id):
-    logger = LOGGERS[server_id]
+    logger = logging.getLogger(server_id)
     while True:
         try:
             data = await cpu_ram__fetch_data(server_id)
@@ -347,7 +311,7 @@ async def cpu_ram__auto_monitoring(server_id):
 
 # Ручной запрос CPU/RAM по кнопке (одноразовый)
 async def cpu_ram__manual_button(server_id):
-    logger = LOGGERS["global"] if server_id == "ALL" else LOGGERS[server_id]
+    logger = logging.getLogger("global_monitoring") if server_id == "ALL" else logging.getLogger(server_id)
     try:
         try:
             placeholder = await bot.send_message(
@@ -391,7 +355,7 @@ DISK_STATE = {sid: {"alert": False} for sid in SERVERS}
 
 # Запрос данных о DISK с API сервера
 async def disk__fetch_data(server_id):
-    logger = LOGGERS[server_id]
+    logger = logging.getLogger(server_id)
     srv = SERVERS[server_id]
     url = f"{srv['base_url']}/disk?token={srv['token']}"
     timeout = aiohttp.ClientTimeout(connect=10, sock_read=20)
@@ -411,7 +375,7 @@ async def disk__fetch_data(server_id):
 
 # Анализ полученных данных и обновление DISK_STATE
 async def disk__analyzer(server_id, data):
-    logger = LOGGERS[server_id]
+    logger = logging.getLogger(server_id)
     try:
         if data is None:
             return False
@@ -437,7 +401,7 @@ async def disk__analyzer(server_id, data):
 
 # Формирование и отправка сообщения в Telegram
 async def disk__send_message(data_by_server, edit_to: tuple[int, int] | None = None):
-    logger = LOGGERS["global"]
+    logger = logging.getLogger("global_monitoring")
     try:
         if not data_by_server:
             logger.error("disk__send_message: empty data")
@@ -500,7 +464,7 @@ async def disk__send_message(data_by_server, edit_to: tuple[int, int] | None = N
 
 # Автоматический мониторинг DISK (циклически)
 async def disk__auto_monitoring(server_id):
-    logger = LOGGERS[server_id]
+    logger = logging.getLogger(server_id)
     interval = SERVERS[server_id]["disk"]["interval"]
 
     while True:
@@ -527,7 +491,7 @@ async def disk__auto_monitoring(server_id):
 
 # Ручной запрос DISK по кнопке (одноразовый)
 async def disk__manual_button(server_id):
-    logger = LOGGERS["global"] if server_id == "ALL" else LOGGERS[server_id]
+    logger = logging.getLogger("global_monitoring") if server_id == "ALL" else logging.getLogger(server_id)
     try:
         # плейсхолдер "ожидание"
         try:
@@ -572,7 +536,7 @@ PROCESSES_STATE = {sid: {"failed": [], "miners": []} for sid in SERVERS}
 
 # Запрос списка запущенных сервисов с API сервера
 async def processes__fetch_data(server_id):
-    logger = LOGGERS[server_id]
+    logger = logging.getLogger(server_id)
     srv = SERVERS[server_id]
     timeout = aiohttp.ClientTimeout(connect=10, sock_read=20)
     results = []
@@ -619,7 +583,7 @@ async def processes__fetch_data(server_id):
 
 # Анализ полученных данных и обновление PROCESSES_STATE
 async def processes__analyzer(server_id, data):
-    logger = LOGGERS[server_id]
+    logger = logging.getLogger(server_id)
     state  = PROCESSES_STATE[server_id]
 
     try:
@@ -672,7 +636,7 @@ async def processes__analyzer(server_id, data):
 
 # Формирование и отправка сообщения в Telegram
 async def processes__send_message(server_id, edit_to: tuple[int, int] | None = None):
-    logger = LOGGERS["global"] if server_id == "ALL" else LOGGERS[server_id]
+    logger = logging.getLogger("global_monitoring") if server_id == "ALL" else logging.getLogger(server_id)
     try:
         targets = SERVERS.keys() if server_id == "ALL" else [server_id]
         parts = []
@@ -758,7 +722,7 @@ async def processes__send_message(server_id, edit_to: tuple[int, int] | None = N
 
 # Автоматический мониторинг (циклически)
 async def processes__auto_monitoring(server_id):
-    logger = LOGGERS[server_id]
+    logger = logging.getLogger(server_id)
     interval = int(SERVERS[server_id]["processes"]["interval"])
     while True:
         try:
@@ -804,7 +768,7 @@ async def processes__auto_monitoring(server_id):
 
 # Ручной запрос PROCESSES по кнопке (одноразовый)
 async def processes__manual_button(server_id):
-    logger = LOGGERS["global"] if server_id == "ALL" else LOGGERS[server_id]
+    logger = logging.getLogger("global_monitoring") if server_id == "ALL" else logging.getLogger(server_id)
     try:
         try:
             b = bot
@@ -855,7 +819,7 @@ UPDATES_STATE = {sid: {"packages": []} for sid in SERVERS}
 
 # Запрос данных об обновлениях с API сервера
 async def updates__fetch_data(server_id):
-    logger = LOGGERS[server_id]
+    logger = logging.getLogger(server_id)
     srv = SERVERS[server_id]
     url = f"{srv['base_url']}/updates?token={srv['token']}"
     timeout = aiohttp.ClientTimeout(connect=10, sock_read=20)
@@ -875,7 +839,7 @@ async def updates__fetch_data(server_id):
 
 # Анализ полученных данных и обновление UPDATES_STATE
 async def updates__analyzer(server_id, data):
-    logger = LOGGERS[server_id]
+    logger = logging.getLogger(server_id)
     state  = UPDATES_STATE[server_id]
 
     try:
@@ -895,7 +859,7 @@ async def updates__analyzer(server_id, data):
 
 # Формирование и отправка сообщения в Telegram
 async def updates__send_message(server_id, edit_to: tuple[int, int] | None = None):
-    logger = LOGGERS["global"] if server_id == "ALL" else LOGGERS[server_id]
+    logger = logging.getLogger("global_monitoring") if server_id == "ALL" else logging.getLogger(server_id)
     try:
         targets = SERVERS.keys() if server_id == "ALL" else [server_id]
         parts = []
@@ -936,7 +900,7 @@ async def updates__send_message(server_id, edit_to: tuple[int, int] | None = Non
 
 # Автоматический мониторинг (циклически)
 async def updates__auto_monitoring(server_id):
-    logger = LOGGERS[server_id]
+    logger = logging.getLogger(server_id)
     interval = int(SERVERS[server_id]["updates"]["interval"])
     while True:
         try:
@@ -957,7 +921,7 @@ async def updates__auto_monitoring(server_id):
 
 # Ручной запрос UPDATES по кнопке (одноразовый)
 async def updates__manual_button(server_id):
-    logger = LOGGERS["global"] if server_id == "ALL" else LOGGERS[server_id]
+    logger = logging.getLogger("global_monitoring") if server_id == "ALL" else logging.getLogger(server_id)
     try:
         # плейсхолдер "ожидание"
         try:
@@ -1006,7 +970,7 @@ async def updates__manual_button(server_id):
 # ===== BACKUPS =====
 #  Запрос данных о BACKUPS с API сервера
 async def backups__fetch_data(server_id):
-    logger = LOGGERS[server_id]
+    logger = logging.getLogger(server_id)
     srv = SERVERS[server_id]
     url = f"{srv['base_url']}/backup_json?token={srv['token']}"
     timeout = aiohttp.ClientTimeout(connect=10, sock_read=20)
@@ -1025,7 +989,7 @@ async def backups__fetch_data(server_id):
 
 # Анализ полученных данных
 async def backups__analyzer(server_id, data):
-    logger = LOGGERS[server_id]
+    logger = logging.getLogger(server_id)
     try:
         if not data:
             logger.warning(f"[{server_id}] backups__analyzer: пустой ответ")
@@ -1040,7 +1004,7 @@ async def backups__analyzer(server_id, data):
 
 # Формирование и отправка сообщения в Telegram
 async def backups__send_message(server_id, data, edit_to: tuple[int, int] | None = None):
-    logger = LOGGERS["global"] if server_id == "ALL" else LOGGERS[server_id]
+    logger = logging.getLogger("global_monitoring") if server_id == "ALL" else logging.getLogger(server_id)
 
     def humanize_seconds(sec: int) -> str:
         try:
@@ -1155,7 +1119,7 @@ async def backups__send_message(server_id, data, edit_to: tuple[int, int] | None
 
 # Автоматический мониторинг (циклически)
 async def backups__auto_monitoring(server_id):
-    logger = LOGGERS[server_id]
+    logger = logging.getLogger(server_id)
     try:
         time_str = SERVERS[server_id]["backups"]["time"]
         hour, minute = map(int, time_str.split(":"))
@@ -1189,7 +1153,7 @@ async def backups__auto_monitoring(server_id):
 
 # Ручной запрос по кнопке (одноразовый)
 async def backups__manual_button(server_id):
-    logger = LOGGERS["global"] if server_id == "ALL" else LOGGERS[server_id]
+    logger = logging.getLogger("global_monitoring") if server_id == "ALL" else logging.getLogger(server_id)
     try:
         # плейсхолдер "ожидание"
         try:
@@ -1240,7 +1204,7 @@ async def backups__manual_button(server_id):
 
 # ===== Основной код одного сервера =====
 async def monitor(server_id: str):
-    logger = LOGGERS[server_id]
+    logger = logging.getLogger(server_id)
     logger.info("=== START MONITORING ===")
 
     tasks = []
@@ -1264,12 +1228,11 @@ async def monitor(server_id: str):
 # ===== Запуск мониторинга =====
 async def main():
     print("🚀 Мониторинг запущен...")
-    init_loggers()
-    LOGGERS["global"].info("=== START GLOBAL MONITORING ===")
+    logging.getLogger("global_monitoring").info("=== START GLOBAL MONITORING ===")
 
     tasks = [monitor(server_id) for server_id in SERVERS.keys()]
     tasks.append(monitor_sites())
-    LOGGERS["global"].info(f"Мониторинг запущен для серверов: {', '.join(SERVERS.keys())}")
+    logging.getLogger("global_monitoring").info(f"Мониторинг запущен для серверов: {', '.join(SERVERS.keys())}")
 
     await asyncio.gather(*tasks)
 
