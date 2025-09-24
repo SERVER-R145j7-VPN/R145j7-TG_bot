@@ -16,11 +16,7 @@ from utils import escape_markdown
 logger = logging.getLogger("bot")
 
 async def handle_logs_command(message: Message) -> None:
-    """
-    Обработчик /logs.
-    Пишет ошибки в общий логгер "bot".
-    """
-    # попытка убрать команду из чата — тихо игнорим ошибки
+    # Удаление команды /logs
     try:
         await message.delete()
     except Exception:
@@ -36,8 +32,8 @@ async def handle_logs_command(message: Message) -> None:
 
             dir_path = os.path.abspath(dir_path)
             if not os.path.isdir(dir_path):
-                lines.append("• _нет такой папки_")
-                lines.append("")  # пустая строка между группами
+                lines.append("• папка не найдена")
+                lines.append("")
                 continue
 
             # собираем только *.log (текущие файлы), ротационные архивы пропускаем
@@ -48,12 +44,12 @@ async def handle_logs_command(message: Message) -> None:
                 )
             except Exception as e:
                 logger.error(f"/logs: не удалось прочитать каталог '{dir_path}': {e}")
-                lines.append("• _ошибка чтения папки_")
+                lines.append("• ошибка чтения папки")
                 lines.append("")
                 continue
 
             if not entries:
-                lines.append("• _файлов нет_")
+                lines.append("• файлы не найдены")
                 lines.append("")
                 continue
 
@@ -63,7 +59,6 @@ async def handle_logs_command(message: Message) -> None:
                 warn_cnt = 0
                 err_cnt = 0
 
-                # читаем построчно, чтобы не дёргать память
                 try:
                     with open(fpath, "r", encoding="utf-8", errors="replace") as fh:
                         for line in fh:
@@ -74,7 +69,7 @@ async def handle_logs_command(message: Message) -> None:
                                 err_cnt += 1
                 except Exception as e:
                     logger.error(f"/logs: ошибка чтения файла '{fpath}': {e}")
-                    lines.append(f"• `{escape_markdown(fname)}` — _ошибка чтения_")
+                    lines.append(f"• `{escape_markdown(fname)}` — ошибка чтения файла")
                     continue
 
                 if warn_cnt == 0 and err_cnt == 0:
@@ -84,7 +79,7 @@ async def handle_logs_command(message: Message) -> None:
 
                 lines.append(f"• `{escape_markdown(fname)}` — {status}")
 
-            lines.append("")  # пустая строка между группами
+            lines.append("")
 
         text = "\n".join(lines).rstrip()
 
