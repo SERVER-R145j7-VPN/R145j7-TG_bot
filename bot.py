@@ -7,6 +7,7 @@
 """
 
 import os
+import time
 import asyncio
 import logging
 from typing import Union
@@ -21,7 +22,8 @@ from monitoring import monitor, monitor_sites, set_bot
 from handlers import handle_command_servers, handle_callback_server
 from logs_report import handle_logs_command
 
-BOT_VERSION = "2.1.0"
+BOT_VERSION = "2.1.1"
+start_time = time.time()
 
 # ===== 🔧 Логирование =====
 # Создание папок для логов
@@ -125,6 +127,15 @@ for sid, cfg in SERVERS.items():
     if console_handler not in srv_logger.handlers:
         srv_logger.addHandler(console_handler)
 
+# ===== 🛠️ Функции и хэндлеры =====
+# Форматирование времени работы бота
+def format_uptime(seconds: int) -> str:
+    minutes, seconds = divmod(int(seconds), 60)
+    hours, minutes = divmod(minutes, 60)
+    days, hours = divmod(hours, 24)
+    months, days = divmod(days, 30)
+    return f"{months}м. {days}д. {hours:02}:{minutes:02}:{seconds:02}"
+
 # --- Проверка доступа ---
 async def deny_if_unauthorized(obj: Union[Message, CallbackQuery]) -> bool:
     user = obj.from_user
@@ -161,6 +172,19 @@ async def handle_version(message: Message):
     except Exception:
         pass
     await message.answer(f"🤖 Bot R145j7 version `{BOT_VERSION}`", parse_mode="MarkdownV2")
+
+async def handle_version(message: Message):
+    if await deny_if_unauthorized(message):
+        return
+    try:
+        await message.delete()
+    except Exception:
+        pass
+    uptime = format_uptime(time.time() - start_time)
+    await message.answer(
+        f"🤖 Bot version: {BOT_VERSION}\n"
+        f"⏳ Uptime: {uptime}"
+    )
 
 async def handle_servers(message: Message):
     if await deny_if_unauthorized(message):
