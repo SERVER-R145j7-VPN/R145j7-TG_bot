@@ -171,19 +171,12 @@ async def handle_version(message: Message):
         await message.delete()
     except Exception:
         pass
-    await message.answer(f"🤖 Bot R145j7 version `{BOT_VERSION}`", parse_mode="MarkdownV2")
-
-async def handle_version(message: Message):
-    if await deny_if_unauthorized(message):
-        return
-    try:
-        await message.delete()
-    except Exception:
-        pass
     uptime = format_uptime(time.time() - start_time)
+    safe_version = BOT_VERSION.replace('.', '\\.')
+    safe_uptime = uptime.replace('.', '\\.')
     await message.answer(
-        f"🤖 Bot version: {BOT_VERSION}\n"
-        f"⏳ Uptime: {uptime}"
+        f"🤖 Bot version: {safe_version}\n"
+        f"⏳ Uptime: {safe_uptime}"
     )
 
 async def handle_servers(message: Message):
