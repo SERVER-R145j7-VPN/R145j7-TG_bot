@@ -3,7 +3,7 @@
   - Отдельный лог-файл на сервер, ротация ежедневно, хранение 7 дней.
 
 • Список серверов в файле конфига
-  - Имя сервера, base_url, токен, пороги CPU/RAM, пороги по диску, расписание обновлений.
+  - Имя сервера, ip, monitoring_port, токен, пороги CPU/RAM, пороги по диску, расписание обновлений.
 
 • Запросы данных с серверов по АПИ
   - /cpu_ram             → загрузка CPU и RAM, load average
@@ -122,7 +122,7 @@ STATUS = {
 async def cpu_ram__fetch_data(server_id):
     logger = logging.getLogger(server_id)
     srv = SERVERS[server_id]
-    url = f"{srv['base_url']}/cpu_ram?token={srv['token']}"
+    url = f"http://{srv['ip']}:{srv['monitoring_port']}/cpu_ram?token={srv['token']}"
     timeout = aiohttp.ClientTimeout(connect=10, sock_read=20)
 
     try:
@@ -357,7 +357,7 @@ DISK_STATE = {sid: {"alert": False} for sid in SERVERS}
 async def disk__fetch_data(server_id):
     logger = logging.getLogger(server_id)
     srv = SERVERS[server_id]
-    url = f"{srv['base_url']}/disk?token={srv['token']}"
+    url = f"http://{srv['ip']}:{srv['monitoring_port']}/disk?token={srv['token']}"
     timeout = aiohttp.ClientTimeout(connect=10, sock_read=20)
 
     try:
@@ -544,7 +544,7 @@ async def processes__fetch_data(server_id):
     try:
         async with aiohttp.ClientSession(timeout=timeout) as session:
             # ===== systemctl =====
-            url_sys = f"{srv['base_url']}/processes_systemctl?token={srv['token']}"
+            url_sys = f"http://{srv['ip']}:{srv['monitoring_port']}/processes_systemctl?token={srv['token']}"
             try:
                 async with session.get(url_sys) as resp:
                     if resp.status == 200:
@@ -561,7 +561,7 @@ async def processes__fetch_data(server_id):
                 logger.error(f"[{server_id}] ❌ Ошибка при запросе systemctl -> {e}")
 
             # ===== pm2 =====
-            url_pm2 = f"{srv['base_url']}/processes_pm2?token={srv['token']}"
+            url_pm2 = f"http://{srv['ip']}:{srv['monitoring_port']}/processes_pm2?token={srv['token']}"
             try:
                 async with session.get(url_pm2) as resp:
                     if resp.status == 200:
@@ -821,7 +821,7 @@ UPDATES_STATE = {sid: {"packages": []} for sid in SERVERS}
 async def updates__fetch_data(server_id):
     logger = logging.getLogger(server_id)
     srv = SERVERS[server_id]
-    url = f"{srv['base_url']}/updates?token={srv['token']}"
+    url = f"http://{srv['ip']}:{srv['monitoring_port']}/updates?token={srv['token']}"
     timeout = aiohttp.ClientTimeout(connect=10, sock_read=20)
 
     try:
@@ -972,7 +972,7 @@ async def updates__manual_button(server_id):
 async def backups__fetch_data(server_id):
     logger = logging.getLogger(server_id)
     srv = SERVERS[server_id]
-    url = f"{srv['base_url']}/backup_json?token={srv['token']}"
+    url = f"http://{srv['ip']}:{srv['monitoring_port']}/backup_json?token={srv['token']}"
     timeout = aiohttp.ClientTimeout(connect=10, sock_read=20)
 
     try:
