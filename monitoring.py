@@ -22,7 +22,7 @@
 import asyncio
 import aiohttp
 import datetime
-from config import TG_ID, SERVERS, SITES_MONITOR, MINERS
+from config import TG_ID, SERVERS, BOTS_MONITOR, SITES_MONITOR, MINERS
 from aiogram import Bot
 import ssl
 import logging
@@ -106,6 +106,49 @@ async def monitor_sites():
                         print(f"Ошибка при отправке отчёта о восстановлении: {e}")
             last_status[url] = is_ok
         await asyncio.sleep(interval)
+
+
+
+# ===== Мониторинг БОТов =====
+# Глобальное состояние БОТОВ для всех серверов
+BOTS_STATE = {bot_name: {"success": None, "version": "", "uptime": ""} 
+              for srv in BOTS_MONITOR["bots"].values() 
+              for bot_name in srv.keys()}
+
+# Запрос данных о БОТах с API сервера
+async def bots__fetch_data(server_id):
+    logger = logging.getLogger(server_id)
+    srv = SERVERS[server_id]
+
+    # Проверяем, есть ли боты на этом сервере
+    from config import BOTS_MONITOR
+    bots_cfg = BOTS_MONITOR.get("bots", {}).get(server_id)
+    if not bots_cfg:
+        logger.info(f"[{server_id}] ⚪ Нет ботов для мониторинга, пропуск")
+        return {}
+
+    # Формируем строку портов
+    ports = list(bots_cfg.values())
+    ports_param = ",".join(str(p) for p in ports)
+    url = f"http://{srv['ip']}:{srv['monitoring_port']}/bots?token={srv['token']}&ports={ports_param}"
+    timeout = aiohttp.ClientTimeout(connect=10, sock_read=20)
+
+    try:
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            async with session.get(url) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    logger.info(f"[{server_id}] ✅ Получены данные о ботах: {list(data.keys())}")
+                    return data
+                else:
+                    logger.warning(f"[{server_id}] ❌ Ошибка при запросе ботов: {resp.status}")
+    except Exception as e:
+        logger.error(f"[{server_id}] ❌ Ошибка при подключении к API ботов: {e}")
+
+    return {}
+
+
+
 
 # ===== CPU/RAM =====
 # Глобальное состояние CPU/RAM для всех серверов
