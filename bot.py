@@ -195,6 +195,8 @@ async def handle_callback(callback: CallbackQuery):
         return
     await handle_callback_server(callback)
 
+from monitoring import bots__updates__auto_monitoring  # Для тестинга
+
 async def main():
     bot_logger.info(f"Bot R145j7 v{BOT_VERSION} is starting...")
 
@@ -209,20 +211,24 @@ async def main():
         dp.callback_query.register(handle_callback)
 
         # Фоновые задачи
-        tasks = [asyncio.create_task(monitor(sid), name=f"monitor:{SERVERS[sid]['name']}") for sid in SERVERS.keys()]
-        bot_logger.info(f"Monitoring started for servers: {', '.join([cfg['name'] for cfg in SERVERS.values()])}")
-        tasks.append(asyncio.create_task(monitor_sites(), name="monitor:sites"))
-        bot_logger.info("Monitoring of sites started")
+        # tasks = [asyncio.create_task(monitor(sid), name=f"monitor:{SERVERS[sid]['name']}") for sid in SERVERS.keys()]
+        # bot_logger.info(f"Monitoring started for servers: {', '.join([cfg['name'] for cfg in SERVERS.values()])}")
+        # tasks.append(asyncio.create_task(monitor_sites(), name="monitor:sites"))
+        # bot_logger.info("Monitoring of sites started")
+
+        for _ in range(3):  # ДЛЯ ТЕСТИНГА!!!!! Удалить после завершения тестов!!!!!!
+            await asyncio.gather(*[bots__updates__auto_monitoring(server_id) for server_id in SERVERS.keys()])
+            await asyncio.sleep(5)
 
         try:
             bot_logger.info("Bot polling started")
             await dp.start_polling(bot)
         finally:
             # Корректное завершение фоновых задач
-            for t in tasks:
-                t.cancel()
-            with suppress(Exception):
-                await asyncio.gather(*tasks, return_exceptions=True)
+            # for t in tasks:
+            #     t.cancel()
+            # with suppress(Exception):
+            #     await asyncio.gather(*tasks, return_exceptions=True)
 
             bot_logger.info("Bot stopped.")
 

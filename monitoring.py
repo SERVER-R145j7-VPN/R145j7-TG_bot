@@ -124,38 +124,49 @@ BOTS_STATE = {bot_name: {"success": None, "version": "", "uptime": ""}
 
 # Запрос данных о БОТах с API сервера
 async def bots__fetch_data(server_id):
+    print(f"[{server_id}] === bots__fetch_data: старт ===")
     logger = logging.getLogger(server_id)
     srv = SERVERS[server_id]
 
     # Проверяем, есть ли боты на этом сервере
+    print(f"[{server_id}] Проверка наличия ботов...")
     from config import BOTS_MONITOR
     bots_cfg = BOTS_MONITOR.get("bots", {}).get(server_id)
     if not bots_cfg:
+        print(f"[{server_id}] Нет ботов для мониторинга, пропуск")
         logger.info(f"[{server_id}] ⚪ Нет ботов для мониторинга, пропуск")
         return {}
 
     # Формируем строку портов
     ports = list(bots_cfg.values())
+    print(f"[{server_id}] Порты ботов: {ports}")
     ports_param = ",".join(str(p) for p in ports)
     url = f"http://{srv['ip']}:{srv['monitoring_port']}/bots?token={srv['token']}&ports={ports_param}"
+    print(f"[{server_id}] URL: {url}")
     timeout = aiohttp.ClientTimeout(connect=10, sock_read=20)
 
     try:
         async with aiohttp.ClientSession(timeout=timeout) as session:
+            print(f"[{server_id}] Открытие сессии aiohttp...")
             async with session.get(url) as resp:
+                print(f"[{server_id}] Response status: {resp.status}")
                 if resp.status == 200:
                     data = await resp.json()
-                    logger.info(f"[{server_id}] ✅ Получены данные о ботах: {list(data.keys())}")
+                    print(f"[{server_id}] Data: {data}")
                     return data
                 else:
+                    print(f"[{server_id}] Ошибка при запросе ботов: {resp.status}")
                     logger.warning(f"[{server_id}] ❌ Ошибка при запросе ботов: {resp.status}")
     except Exception as e:
+        print(f"[{server_id}] Ошибка при подключении к API ботов: {e}")
         logger.error(f"[{server_id}] ❌ Ошибка при подключении к API ботов: {e}")
 
+    print(f"[{server_id}] Возврат пустого словаря из bots__fetch_data")
     return {}
 
 # Анализ полученных данных и обновление BOTS_STATE
 async def bots__analyzer(server_id, data):
+    print(f"[{server_id}] === bots__analyzer: старт ===")
     logger = logging.getLogger(server_id)
 
     def _parse_uptime_tuple(uptime_str: str):
@@ -166,57 +177,71 @@ async def bots__analyzer(server_id, data):
             h, mi, se = map(int, t_part.split(":"))
             return (months, days, h, mi, se)
         except Exception:
+            print(f"[{server_id}] Не удалось распарсить uptime: '{uptime_str}'")
             return (0, 0, 0, 0, 0)
     try:
         if not data:
+            print(f"[{server_id}] bots__analyzer: пустые данные")
             logger.warning(f"[{server_id}] bots__analyzer: пустые данные")
             return False
 
         notify = False
 
+        print(f"[{server_id}] Начало анализа {len(data)} ботов")
+        # Получаем только ботов для текущего сервера
+        bots_cfg = BOTS_MONITOR["bots"].get(server_id, {})
+        print(f"[{server_id}] Поиск имени бота только в bots_cfg: {bots_cfg}")
         # проходим по всем ботам, которые пришли с сервера
         for port, bot_info in data.items():
+            print(f"[{server_id}] for port={port} ...")
             try:
                 success = bool(bot_info.get("success"))
                 version = str(bot_info.get("version", "")).strip()
                 uptime  = str(bot_info.get("uptime", "")).strip()
+                print(f"[{server_id}] Обработка порта {port}: success={success}, version={version}, uptime={uptime}")
 
-                # ищем имя бота по порту
+                # ищем имя бота по порту только внутри bots_cfg
                 bot_name = None
-                for bots in BOTS_MONITOR["bots"].values():
-                    if str(port) in map(str, bots.values()):
-                        # нашли совпадение
-                        for name, p in bots.items():
-                            if str(p) == str(port):
-                                bot_name = name
-                                break
-                    if bot_name:
+                for name, p in bots_cfg.items():
+                    print(f"[{server_id}] Проверка пары name={name}, p={p} для порта {port}")
+                    if str(p) == str(port):
+                        bot_name = name
+                        print(f"[{server_id}] Найден бот: {bot_name} (поиск только внутри сервера)")
                         break
 
                 if not bot_name:
+                    print(f"[{server_id}] неизвестный бот на порту {port}")
                     logger.warning(f"[{server_id}] неизвестный бот на порту {port}")
                     continue
 
                 prev_state = BOTS_STATE.get(bot_name, {})
                 prev_version = str(prev_state.get("version", "")).strip()
                 prev_uptime  = str(prev_state.get("uptime", "")).strip()
+                print(f"[{bot_name}] prev_state: {prev_state}")
 
                 # если первый цикл (пустая версия и аптайм) — не уведомляем
                 if prev_version == "" and prev_uptime == "":
+                    print(f"[{bot_name}] Первый цикл, просто обновляем состояние")
                     BOTS_STATE[bot_name] = {
                         "success": success,
                         "version": version,
                         "uptime": uptime
                     }
+                    print(f"[{bot_name}] State updated: {BOTS_STATE[bot_name]}")
                     continue
 
                 # анализ условий для уведомления
                 if not success:
+                    print(f"[{bot_name}] Trigger reason: success == False")
                     notify = True
                 elif version != prev_version:
+                    print(f"[{bot_name}] Trigger reason: version changed ({prev_version} -> {version})")
                     notify = True
                 elif _parse_uptime_tuple(uptime) < _parse_uptime_tuple(prev_uptime):
+                    print(f"[{bot_name}] Trigger reason: uptime уменьшился ({prev_uptime} -> {uptime})")
                     notify = True
+                else:
+                    print(f"[{bot_name}] Нет условий для уведомления")
 
                 # обновляем текущее состояние
                 BOTS_STATE[bot_name] = {
@@ -224,18 +249,41 @@ async def bots__analyzer(server_id, data):
                     "version": version,
                     "uptime": uptime
                 }
+                print(f"[{bot_name}] State updated: {BOTS_STATE[bot_name]}")
 
             except Exception as e:
+                print(f"[{server_id}] bots__analyzer: ошибка при обработке бота на порту {port} -> {e}")
                 logger.error(f"[{server_id}] bots__analyzer: ошибка при обработке бота на порту {port} -> {e}")
 
+        print(f"[{server_id}] Анализ завершён, notify={notify}")
         return notify
 
     except Exception as e:
+        print(f"[{server_id}] bots__analyzer failed -> {e}")
         logger.error(f"[{server_id}] bots__analyzer failed -> {e}")
         return False
 
 
+# Разовый прогон мониторинга ботов по серверу (заглушка)
+async def bots__updates__auto_monitoring(server_id: str):
+    logger = logging.getLogger(server_id)
+    data = await bots__fetch_data(server_id)
+    notify = await bots__analyzer(server_id, data)
 
+    bots_cfg = BOTS_MONITOR["bots"].get(server_id, {})
+    for bot_name in bots_cfg.keys():
+        state = BOTS_STATE.get(bot_name, {})
+        success = state.get("success")
+        version = state.get("version", "")
+        uptime = state.get("uptime", "")
+        msg = f"[{bot_name}]: success={success}, version={version}, uptime={uptime}"
+
+        if notify:
+            logger.warning(msg)
+        else:
+            logger.info(msg)
+
+    print(f"[{server_id}] bots__analyzer -> notify={notify}")
 
 
 
