@@ -109,11 +109,18 @@ async def monitor_sites():
 
 
 
+
+
+
+
+
 # ===== Мониторинг БОТов =====
 # Глобальное состояние БОТОВ для всех серверов
 BOTS_STATE = {bot_name: {"success": None, "version": "", "uptime": ""} 
               for srv in BOTS_MONITOR["bots"].values() 
               for bot_name in srv.keys()}
+
+# http://83.229.84.192:58423/bots?token=aZ7@Lp9Vd6qW2!mN4r$X8hJzC1e%KtY&ports=5151,5252
 
 # Запрос данных о БОТах с API сервера
 async def bots__fetch_data(server_id):
@@ -146,6 +153,90 @@ async def bots__fetch_data(server_id):
         logger.error(f"[{server_id}] ❌ Ошибка при подключении к API ботов: {e}")
 
     return {}
+
+# Анализ полученных данных и обновление BOTS_STATE
+async def bots__analyzer(server_id, data):
+    logger = logging.getLogger(server_id)
+
+    def _parse_uptime_tuple(uptime_str: str):
+        try:
+            m_part, d_part, t_part = uptime_str.strip().split()
+            months = int(m_part[:-1])
+            days = int(d_part[:-1])
+            h, mi, se = map(int, t_part.split(":"))
+            return (months, days, h, mi, se)
+        except Exception:
+            return (0, 0, 0, 0, 0)
+    try:
+        if not data:
+            logger.warning(f"[{server_id}] bots__analyzer: пустые данные")
+            return False
+
+        notify = False
+
+        # проходим по всем ботам, которые пришли с сервера
+        for port, bot_info in data.items():
+            try:
+                success = bool(bot_info.get("success"))
+                version = str(bot_info.get("version", "")).strip()
+                uptime  = str(bot_info.get("uptime", "")).strip()
+
+                # ищем имя бота по порту
+                bot_name = None
+                for bots in BOTS_MONITOR["bots"].values():
+                    if str(port) in map(str, bots.values()):
+                        # нашли совпадение
+                        for name, p in bots.items():
+                            if str(p) == str(port):
+                                bot_name = name
+                                break
+                    if bot_name:
+                        break
+
+                if not bot_name:
+                    logger.warning(f"[{server_id}] неизвестный бот на порту {port}")
+                    continue
+
+                prev_state = BOTS_STATE.get(bot_name, {})
+                prev_version = str(prev_state.get("version", "")).strip()
+                prev_uptime  = str(prev_state.get("uptime", "")).strip()
+
+                # если первый цикл (пустая версия и аптайм) — не уведомляем
+                if prev_version == "" and prev_uptime == "":
+                    BOTS_STATE[bot_name] = {
+                        "success": success,
+                        "version": version,
+                        "uptime": uptime
+                    }
+                    continue
+
+                # анализ условий для уведомления
+                if not success:
+                    notify = True
+                elif version != prev_version:
+                    notify = True
+                elif _parse_uptime_tuple(uptime) < _parse_uptime_tuple(prev_uptime):
+                    notify = True
+
+                # обновляем текущее состояние
+                BOTS_STATE[bot_name] = {
+                    "success": success,
+                    "version": version,
+                    "uptime": uptime
+                }
+
+            except Exception as e:
+                logger.error(f"[{server_id}] bots__analyzer: ошибка при обработке бота на порту {port} -> {e}")
+
+        return notify
+
+    except Exception as e:
+        logger.error(f"[{server_id}] bots__analyzer failed -> {e}")
+        return False
+
+
+
+
 
 
 
