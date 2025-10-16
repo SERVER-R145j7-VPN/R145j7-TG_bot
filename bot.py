@@ -22,7 +22,7 @@ from monitoring import monitor, monitor_sites, set_bot
 from handlers import handle_command_servers, handle_callback_server
 from logs_report import handle_logs_command
 
-BOT_VERSION = "2.1.1"
+BOT_VERSION = "2.2.0"
 start_time = time.time()
 
 # ===== 🔧 Логирование =====
