@@ -1,11 +1,11 @@
 """
 Данный файл содержит хэндлеры для работы с кнопками Telegram-бота.
-Реализует доступ к категориям мониторинга (CPU/RAM, диск, процессы, обновления, бэкапы, сайты)
-и ручные запросы по серверам и сайтам через Telegram-интерфейс.
+Реализует доступ к категориям мониторинга (CPU/RAM, диск, процессы, обновления, бэкапы, сайты, боты)
+и ручные запросы по серверам, ботам и сайтам через Telegram-интерфейс.
 """
 import logging
 from aiogram.types import Message, CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup
-from config import CATEGORIES, SERVERS, SITES_MONITOR
+from config import CATEGORIES, SERVERS, SITES_MONITOR, BOTS_MONITOR
 from monitoring import (
     cpu_ram__manual_button,
     disk__manual_button,
@@ -13,6 +13,7 @@ from monitoring import (
     updates__manual_button,
     backups__manual_button,
     check_single_site, send_site_status,
+    bots__manual_button,
     escape_markdown
 )
 
@@ -20,11 +21,20 @@ logger = logging.getLogger('bot')
 
 def build_main_menu():
     buttons = [[InlineKeyboardButton(text=name, callback_data=f"cat:{cat}")] for cat, name in CATEGORIES.items()]
+    buttons.append([InlineKeyboardButton(text="Боты", callback_data="cat:bots")])
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 def build_servers_menu(category: str):
     if category == "sites":
         return None
+    if category == "bots":
+        buttons = []
+        bots = BOTS_MONITOR.get("bots", {})
+        for sid, bot_list in bots.items():
+            for bot_name in bot_list:
+                buttons.append([InlineKeyboardButton(text=bot_name, callback_data=f"bots:{bot_name}")])
+        buttons.append([InlineKeyboardButton(text="Все", callback_data="bots:ALL")])
+        return InlineKeyboardMarkup(inline_keyboard=buttons)
     # show server names, but callback carries server_id (sid)
     buttons = [
         [InlineKeyboardButton(text=cfg["name"], callback_data=f"{category}:{sid}")]
@@ -77,6 +87,14 @@ async def handle_callback_server(callback: CallbackQuery):
                 await send_site_status("request", "\n".join(results))
             except Exception as e:
                 logger.error('handle_callback_server: sites block failed: %s', e)
+        elif category == "bots":
+            try:
+                await callback.message.answer(
+                    "🤖 Выберите бота:",
+                    reply_markup=build_servers_menu(category)
+                )
+            except Exception as e:
+                logger.error('handle_callback_server: answer failed: %s', e)
         else:
             try:
                 label = CATEGORIES.get(category, category.upper())
@@ -121,3 +139,8 @@ async def handle_callback_server(callback: CallbackQuery):
             await backups__manual_button(arg)
         except Exception as e:
             logger.error('backups__manual_button failed: %s', e)
+    elif category == "bots":
+        try:
+            await bots__manual_button(arg)
+        except Exception as e:
+            logger.error('bots__manual_button failed: %s', e)

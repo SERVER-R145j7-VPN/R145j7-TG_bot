@@ -5,18 +5,22 @@
 • Список серверов в файле конфига
   - Имя сервера, ip, monitoring_port, токен, пороги CPU/RAM, пороги по диску, расписание обновлений.
 
-• Запросы данных с серверов по АПИ
+• Запросы данных с серверов по API
   - /cpu_ram             → загрузка CPU и RAM, load average
   - /disk                → заполнение диска
   - /processes           → статус системных сервисов
   - /updates             → наличие системных обновлений
   - /backup_json         → отчёт о выполнении бэкапов
+  - /bots                → статус, версия и аптайм Telegram-ботов
 
 • Контроль майнеров
   - Поиск подозрительных процессов (майнеров) в списке запущенных.
 
 • Мониторинг сайтов
   - Проверка списка URL, уведомления при падении и восстановлении.
+
+• Мониторинг ботов
+  - Контроль доступности, версий и аптайма Telegram-ботов, уведомления при сбоях и обновлениях.
 """
 
 import asyncio
@@ -120,8 +124,6 @@ BOTS_STATE = {
     for srv in BOTS_MONITOR["bots"].values()
     for bot_name in srv.keys()
 }
-
-# http://83.229.84.192:58423/bots?token=aZ7@Lp9Vd6qW2!mN4r$X8hJzC1e%KtY&ports=5151,5252
 
 # Запрос данных о БОТах с API сервера
 async def bots__fetch_data(server_id):
@@ -1500,6 +1502,7 @@ async def monitor(server_id: str):
         except Exception as e:
             logger.error(f"❌ Failed to start task {name}: {e}")
 
+    start_task(bots__updates__auto_monitoring(server_id), "bots")
     start_task(cpu_ram__auto_monitoring(server_id), "cpu_ram")
     start_task(disk__auto_monitoring(server_id), "disk")
     start_task(processes__auto_monitoring(server_id), "processes")
