@@ -266,15 +266,15 @@ async def bots__send_message(bot_names: list[str], edit_to: tuple[int, int] | No
             # Формируем блок сообщения для этого бота
             bot_lines = [f"*🤖 {escape_markdown(bot_name)} — {srv_name}*"]
             if not success:
-                bot_lines.append("❌ Бот недоступен")
+                bot_lines.append("❌ БОТ НЕДОСТУПЕН ❌")
             else:
-                bot_lines.append("✅ Бот работает нормально")
+                bot_lines.append("✅ НОРМА ✅")
             if new_ver:
-                bot_lines.append(f"⬆️ Версия изменена на `{escape_markdown(version)}`")
+                bot_lines.append(f"⚠️ Версия изменена на `{escape_markdown(version)}`")
             else:
                 bot_lines.append(f"📦 Версия: `{escape_markdown(version)}`")
             if restarted:
-                bot_lines.append(f"🔁 Бот был перезапущен\n🕒 Аптайм: `{escape_markdown(uptime)}`")
+                bot_lines.append(f"🆘 Бот был перезапущен\n🕒 Аптайм: `{escape_markdown(uptime)}`")
             else:
                 bot_lines.append(f"🕒 Аптайм: `{escape_markdown(uptime)}`")
             block_msg = "\n".join(bot_lines)
@@ -337,7 +337,14 @@ async def bots__updates__auto_monitoring(server_id: str):
         await asyncio.sleep(interval)
 
 # Ручной запрос БОТОВ по кнопке (одноразовый)
-async def bots__manual_button(server_id, bot_name):
+async def bots__manual_button(bot_name):
+    server_id = "ALL"
+    if bot_name != "ALL":
+        for sid, bots in BOTS_MONITOR.get("bots", {}).items():
+            if bot_name in bots:
+                server_id = sid
+                break
+
     logger = logging.getLogger("global_monitoring") if server_id == "ALL" else logging.getLogger(server_id)
     try:
         try:
