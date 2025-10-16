@@ -21,7 +21,6 @@ logger = logging.getLogger('bot')
 
 def build_main_menu():
     buttons = [[InlineKeyboardButton(text=name, callback_data=f"cat:{cat}")] for cat, name in CATEGORIES.items()]
-    buttons.append([InlineKeyboardButton(text="Боты", callback_data="cat:bots")])
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 def build_servers_menu(category: str):

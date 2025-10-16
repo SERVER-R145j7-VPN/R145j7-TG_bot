@@ -308,8 +308,12 @@ async def bots__send_message(bot_names: list[str], edit_to: tuple[int, int] | No
 # Автоматический мониторинг БОТОВ (циклически)
 async def bots__updates__auto_monitoring(server_id: str):
     logger = logging.getLogger(server_id)
-    interval = int(BOTS_MONITOR["interval"])
     bots_cfg = BOTS_MONITOR.get("bots", {}).get(server_id, {})
+    if not bots_cfg:
+        logger.info(f"[{server_id}] ⚪ Нет ботов для мониторинга, задача остановлена")
+        return
+    
+    interval = int(BOTS_MONITOR["interval"])
     while True:
         try:
             data = await bots__fetch_data(server_id)
