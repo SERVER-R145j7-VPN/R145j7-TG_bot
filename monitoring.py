@@ -3,26 +3,30 @@
   - Отдельный лог-файл на сервер, ротация ежедневно, хранение 7 дней.
 
 • Список серверов в файле конфига
-  - Имя сервера, base_url, токен, пороги CPU/RAM, пороги по диску, расписание обновлений.
+  - Имя сервера, ip, monitoring_port, токен, пороги CPU/RAM, пороги по диску, расписание обновлений.
 
-• Запросы данных с серверов по АПИ
+• Запросы данных с серверов по API
   - /cpu_ram             → загрузка CPU и RAM, load average
   - /disk                → заполнение диска
   - /processes           → статус системных сервисов
   - /updates             → наличие системных обновлений
   - /backup_json         → отчёт о выполнении бэкапов
+  - /bots                → статус, версия и аптайм Telegram-ботов
 
 • Контроль майнеров
   - Поиск подозрительных процессов (майнеров) в списке запущенных.
 
 • Мониторинг сайтов
   - Проверка списка URL, уведомления при падении и восстановлении.
+
+• Мониторинг ботов
+  - Контроль доступности, версий и аптайма Telegram-ботов, уведомления при сбоях и обновлениях.
 """
 
 import asyncio
 import aiohttp
 import datetime
-from config import TG_ID, SERVERS, SITES_MONITOR, MINERS
+from config import TG_ID, SERVERS, BOTS_MONITOR, SITES_MONITOR, MINERS
 from aiogram import Bot
 import ssl
 import logging
@@ -107,6 +111,299 @@ async def monitor_sites():
             last_status[url] = is_ok
         await asyncio.sleep(interval)
 
+# ===== Мониторинг БОТов =====
+# Глобальное состояние БОТОВ для всех серверов
+BOTS_STATE = {
+    bot_name: {
+        "success": None,
+        "version": "",
+        "uptime": "",
+        "new_version": False,
+        "restarted": False,
+    }
+    for srv in BOTS_MONITOR["bots"].values()
+    for bot_name in srv.keys()
+}
+
+# Запрос данных о БОТах с API сервера
+async def bots__fetch_data(server_id):
+    logger = logging.getLogger(server_id)
+    srv = SERVERS[server_id]
+
+    # Проверяем, есть ли боты на этом сервере
+    from config import BOTS_MONITOR
+    bots_cfg = BOTS_MONITOR.get("bots", {}).get(server_id)
+    if not bots_cfg:
+        logger.info(f"[{server_id}] ⚪ Нет ботов для мониторинга, пропуск")
+        return {}
+
+    # Формируем строку портов
+    ports = list(bots_cfg.values())
+    ports_param = ",".join(str(p) for p in ports)
+    url = f"http://{srv['ip']}:{srv['monitoring_port']}/bots?token={srv['token']}&ports={ports_param}"
+    timeout = aiohttp.ClientTimeout(connect=10, sock_read=20)
+
+    try:
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            async with session.get(url) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    return data
+                else:
+                    logger.warning(f"[{server_id}] ❌ Ошибка при запросе ботов: {resp.status}")
+    except Exception as e:
+        logger.error(f"[{server_id}] ❌ Ошибка при подключении к API ботов: {e}")
+
+    return {}
+
+# Анализ полученных данных и обновление BOTS_STATE
+async def bots__analyzer(server_id, data):
+    logger = logging.getLogger(server_id)
+
+    def _parse_uptime_tuple(uptime_str: str):
+        try:
+            m_part, d_part, t_part = uptime_str.strip().split()
+            months = int(m_part[:-1])
+            days = int(d_part[:-1])
+            h, mi, se = map(int, t_part.split(":"))
+            return (months, days, h, mi, se)
+        except Exception:
+            return (0, 0, 0, 0, 0)
+    try:
+        if not data:
+            logger.warning(f"[{server_id}] bots__analyzer: пустые данные")
+            return False, []
+
+        notify = False
+        bots_to_notify = []
+
+        # Получаем только ботов для текущего сервера
+        bots_cfg = BOTS_MONITOR["bots"].get(server_id, {})
+        # проходим по всем ботам, которые пришли с сервера
+        for port, bot_info in data.items():
+            try:
+                success = bool(bot_info.get("success"))
+                version = str(bot_info.get("version", "")).strip()
+                uptime  = str(bot_info.get("uptime", "")).strip()
+
+                # ищем имя бота по порту только внутри bots_cfg
+                bot_name = None
+                for name, p in bots_cfg.items():
+                    if str(p) == str(port):
+                        bot_name = name
+                        break
+
+                if not bot_name:
+                    logger.warning(f"[{server_id}] неизвестный бот на порту {port}")
+                    continue
+
+                prev_state = BOTS_STATE.get(bot_name, {})
+                prev_version = str(prev_state.get("version", "")).strip()
+                prev_uptime  = str(prev_state.get("uptime", "")).strip()
+
+                # Сбросить флаги перед анализом
+                BOTS_STATE[bot_name]["new_version"] = False
+                BOTS_STATE[bot_name]["restarted"] = False
+
+                # если первый цикл (пустая версия и аптайм) — не уведомляем
+                if prev_version == "" and prev_uptime == "":
+                    BOTS_STATE[bot_name]["success"] = success
+                    BOTS_STATE[bot_name]["version"] = version
+                    BOTS_STATE[bot_name]["uptime"] = uptime
+                    # Флаги уже сброшены выше
+                    continue
+
+                # анализ условий для уведомления
+                if not success:
+                    notify = True
+                    bots_to_notify.append(bot_name)
+                elif version != prev_version:
+                    notify = True
+                    BOTS_STATE[bot_name]["new_version"] = True
+                    bots_to_notify.append(bot_name)
+                elif _parse_uptime_tuple(uptime) < _parse_uptime_tuple(prev_uptime):
+                    notify = True
+                    BOTS_STATE[bot_name]["restarted"] = True
+                    bots_to_notify.append(bot_name)
+
+                # обновляем текущее состояние, включая флаги
+                BOTS_STATE[bot_name]["success"] = success
+                BOTS_STATE[bot_name]["version"] = version
+                BOTS_STATE[bot_name]["uptime"] = uptime
+                # Флаги new_version и restarted уже выставлены выше
+
+            except Exception as e:
+                logger.error(f"[{server_id}] bots__analyzer: ошибка при обработке бота на порту {port} -> {e}")
+
+        return notify, bots_to_notify
+
+    except Exception as e:
+        logger.error(f"[{server_id}] bots__analyzer failed -> {e}")
+        return False, []
+
+# Формирование и отправка сообщения в Telegram (группировка по списку ботов)
+async def bots__send_message(bot_names: list[str], edit_to: tuple[int, int] | None = None):
+    logger = logging.getLogger("global_monitoring")
+    try:
+        parts = []
+        for bot_name in bot_names:
+            # Определяем сервер для каждого бота
+            sid = None
+            for server_id, bots_cfg in BOTS_MONITOR["bots"].items():
+                if bot_name in bots_cfg:
+                    sid = server_id
+                    break
+            if sid is None:
+                continue
+            srv_name = escape_markdown(SERVERS[sid]["name"])
+            state = BOTS_STATE.get(bot_name, {})
+            success = state.get("success")
+            version = state.get("version", "—")
+            uptime = state.get("uptime", "—")
+            new_ver = state.get("new_version", False)
+            restarted = state.get("restarted", False)
+
+            # Формируем блок сообщения для этого бота
+            bot_lines = [f"*🤖 {escape_markdown(bot_name)} — {srv_name}*"]
+            if not success:
+                bot_lines.append("❌ БОТ НЕДОСТУПЕН ❌")
+            else:
+                bot_lines.append("✅ НОРМА ✅")
+            if new_ver:
+                bot_lines.append(f"⚠️ Версия изменена на `{escape_markdown(version)}`")
+            else:
+                bot_lines.append(f"📦 Версия: `{escape_markdown(version)}`")
+            if restarted:
+                bot_lines.append(f"🆘 Бот был перезапущен\n🕒 Аптайм: `{escape_markdown(uptime)}`")
+            else:
+                bot_lines.append(f"🕒 Аптайм: `{escape_markdown(uptime)}`")
+            block_msg = "\n".join(bot_lines)
+            parts.append(block_msg)
+
+        msg = "\n\n".join(parts)
+
+        b = bot
+        if b is None:
+            logger.error("Bot instance is not set. Call set_bot() from bot.py first.")
+            return
+
+        # === Отправка ===
+        if edit_to:
+            try:
+                await b.edit_message_text(
+                    chat_id=edit_to[0],
+                    message_id=edit_to[1],
+                    text=msg,
+                    parse_mode="MarkdownV2",
+                )
+                return
+            except Exception as e:
+                logger.warning(f"edit_message_text failed -> {e}; fallback to send")
+
+        await b.send_message(chat_id=TG_ID, text=msg, parse_mode="MarkdownV2")
+
+    except Exception as e:
+        logger.error(f"bots__send_message failed -> {e}")
+
+# Автоматический мониторинг БОТОВ (циклически)
+async def bots__updates__auto_monitoring(server_id: str):
+    logger = logging.getLogger(server_id)
+    bots_cfg = BOTS_MONITOR.get("bots", {}).get(server_id, {})
+    if not bots_cfg:
+        logger.info(f"[{server_id}] ⚪ Нет ботов для мониторинга, задача остановлена")
+        return
+    
+    interval = int(BOTS_MONITOR["interval"])
+    while True:
+        try:
+            data = await bots__fetch_data(server_id)
+            if not data:
+                logger.warning(f"[{server_id}] BOTS: нет данных (fetch failed)")
+                await asyncio.sleep(interval)
+                continue
+            notify, bots_to_notify = await bots__analyzer(server_id, data)
+            if notify and bots_to_notify:
+                for bot_name in bots_to_notify:
+                    await bots__send_message(server_id, bot_name)
+            # Логирование состояния всех ботов текущего сервера
+            for bot_name in bots_cfg.keys():
+                state = BOTS_STATE.get(bot_name, {})
+                success = state.get("success")
+                version = state.get("version", "")
+                uptime = state.get("uptime", "")
+                msg = f"[{bot_name}]: success={success}, version={version}, uptime={uptime}"
+                if notify:
+                    logger.warning(msg)
+                else:
+                    logger.info(msg)
+        except Exception as e:
+            logger.error(f"[{server_id}] bots__updates__auto_monitoring failed -> {e}")
+        await asyncio.sleep(interval)
+
+# Ручной запрос БОТОВ по кнопке (одноразовый)
+async def bots__manual_button(bot_name):
+    server_id = "ALL"
+    if bot_name != "ALL":
+        for sid, bots in BOTS_MONITOR.get("bots", {}).items():
+            if bot_name in bots:
+                server_id = sid
+                break
+
+    logger = logging.getLogger("global_monitoring") if server_id == "ALL" else logging.getLogger(server_id)
+    try:
+        try:
+            b = bot
+            if b is None:
+                logger.error("Bot instance is not set. Call set_bot() from bot.py first.")
+                edit_to = None
+            else:
+                placeholder = await b.send_message(
+                    chat_id=TG_ID,
+                    text="⏳ Ожидание данных",
+                    parse_mode="MarkdownV2",
+                )
+                edit_to = (placeholder.chat.id, placeholder.message_id)
+        except Exception as e:
+            logger.warning(f"bots__manual_button: placeholder send failed -> {e}")
+            edit_to = None
+
+        # ===== все боты =====
+        if bot_name == "ALL":
+            bot_names = []
+            for bots in BOTS_MONITOR["bots"].values():
+                bot_names.extend(bots.keys())
+        # ===== один бот =====
+        else:
+            bot_names = [bot_name]
+        bot_names = list(set(bot_names))
+
+        servers_to_update = set()
+        bot_to_server = {}
+        for sid, bots in BOTS_MONITOR["bots"].items():
+            for bname in bots.keys():
+                if bname in bot_names:
+                    servers_to_update.add(sid)
+                    bot_to_server[bname] = sid
+
+        any_data = False
+        for sid in servers_to_update:
+            data = await bots__fetch_data(sid)
+            if data:
+                await bots__analyzer(sid, data)
+                any_data = True
+            else:
+                logger.warning(f"[{sid}] ❌ Не удалось получить данные о ботах для ручного запроса")
+
+        if not any_data:
+            logger.warning("❌ Ручной запрос BOTS: ни по одному серверу данных нет")
+            return
+
+        # После обновления состояний отправляем одно сообщение по всем bot_names
+        await bots__send_message(bot_names, edit_to=edit_to)
+
+    except Exception as e:
+        logger.error(f"[{server_id}] bots__manual_button failed -> {e}")
+
 # ===== CPU/RAM =====
 # Глобальное состояние CPU/RAM для всех серверов
 CPU_STATE = {sid: {"status": "NORMAL", "level": 0} for sid in SERVERS}
@@ -122,7 +419,7 @@ STATUS = {
 async def cpu_ram__fetch_data(server_id):
     logger = logging.getLogger(server_id)
     srv = SERVERS[server_id]
-    url = f"{srv['base_url']}/cpu_ram?token={srv['token']}"
+    url = f"http://{srv['ip']}:{srv['monitoring_port']}/cpu_ram?token={srv['token']}"
     timeout = aiohttp.ClientTimeout(connect=10, sock_read=20)
 
     try:
@@ -149,7 +446,6 @@ async def cpu_ram__analizer(server_id, data):
     level = st["level"]
 
     try:
-        # нет данных — интервал по текущему статусу, без уведомлений
         if not data:
             interval = intervals[STATUS[st["status"]]["interval_key"]]
             return interval, False
@@ -357,7 +653,7 @@ DISK_STATE = {sid: {"alert": False} for sid in SERVERS}
 async def disk__fetch_data(server_id):
     logger = logging.getLogger(server_id)
     srv = SERVERS[server_id]
-    url = f"{srv['base_url']}/disk?token={srv['token']}"
+    url = f"http://{srv['ip']}:{srv['monitoring_port']}/disk?token={srv['token']}"
     timeout = aiohttp.ClientTimeout(connect=10, sock_read=20)
 
     try:
@@ -544,7 +840,7 @@ async def processes__fetch_data(server_id):
     try:
         async with aiohttp.ClientSession(timeout=timeout) as session:
             # ===== systemctl =====
-            url_sys = f"{srv['base_url']}/processes_systemctl?token={srv['token']}"
+            url_sys = f"http://{srv['ip']}:{srv['monitoring_port']}/processes_systemctl?token={srv['token']}"
             try:
                 async with session.get(url_sys) as resp:
                     if resp.status == 200:
@@ -561,7 +857,7 @@ async def processes__fetch_data(server_id):
                 logger.error(f"[{server_id}] ❌ Ошибка при запросе systemctl -> {e}")
 
             # ===== pm2 =====
-            url_pm2 = f"{srv['base_url']}/processes_pm2?token={srv['token']}"
+            url_pm2 = f"http://{srv['ip']}:{srv['monitoring_port']}/processes_pm2?token={srv['token']}"
             try:
                 async with session.get(url_pm2) as resp:
                     if resp.status == 200:
@@ -821,7 +1117,7 @@ UPDATES_STATE = {sid: {"packages": []} for sid in SERVERS}
 async def updates__fetch_data(server_id):
     logger = logging.getLogger(server_id)
     srv = SERVERS[server_id]
-    url = f"{srv['base_url']}/updates?token={srv['token']}"
+    url = f"http://{srv['ip']}:{srv['monitoring_port']}/updates?token={srv['token']}"
     timeout = aiohttp.ClientTimeout(connect=10, sock_read=20)
 
     try:
@@ -972,7 +1268,7 @@ async def updates__manual_button(server_id):
 async def backups__fetch_data(server_id):
     logger = logging.getLogger(server_id)
     srv = SERVERS[server_id]
-    url = f"{srv['base_url']}/backup_json?token={srv['token']}"
+    url = f"http://{srv['ip']}:{srv['monitoring_port']}/backup_json?token={srv['token']}"
     timeout = aiohttp.ClientTimeout(connect=10, sock_read=20)
 
     try:
@@ -1217,6 +1513,7 @@ async def monitor(server_id: str):
         except Exception as e:
             logger.error(f"❌ Failed to start task {name}: {e}")
 
+    start_task(bots__updates__auto_monitoring(server_id), "bots")
     start_task(cpu_ram__auto_monitoring(server_id), "cpu_ram")
     start_task(disk__auto_monitoring(server_id), "disk")
     start_task(processes__auto_monitoring(server_id), "processes")
