@@ -107,13 +107,6 @@ async def monitor_sites():
             last_status[url] = is_ok
         await asyncio.sleep(interval)
 
-
-
-
-
-
-
-
 # ===== Мониторинг БОТов =====
 # Глобальное состояние БОТОВ для всех серверов
 BOTS_STATE = {
@@ -246,24 +239,21 @@ async def bots__analyzer(server_id, data):
         logger.error(f"[{server_id}] bots__analyzer failed -> {e}")
         return False, []
 
-
-# Формирование и отправка сообщения в Telegram
-async def bots__send_message(server_id, bot_name: str, edit_to: tuple[int, int] | None = None):
-    logger = logging.getLogger("global_monitoring") if server_id == "ALL" else logging.getLogger(server_id)
+# Формирование и отправка сообщения в Telegram (группировка по списку ботов)
+async def bots__send_message(bot_names: list[str], edit_to: tuple[int, int] | None = None):
+    logger = logging.getLogger("global_monitoring")
     try:
-        targets = BOTS_MONITOR["bots"].keys() if server_id == "ALL" else [server_id]
         parts = []
-
-        for sid in targets:
+        for bot_name in bot_names:
+            # Определяем сервер для каждого бота
+            sid = None
+            for server_id, bots_cfg in BOTS_MONITOR["bots"].items():
+                if bot_name in bots_cfg:
+                    sid = server_id
+                    break
+            if sid is None:
+                continue
             srv_name = escape_markdown(SERVERS[sid]["name"])
-            bots_cfg = BOTS_MONITOR["bots"].get(sid, {})
-            if not bots_cfg:
-                continue
-
-            # если указан конкретный бот, берем только его
-            if bot_name not in bots_cfg.keys():
-                continue
-
             state = BOTS_STATE.get(bot_name, {})
             success = state.get("success")
             version = state.get("version", "—")
@@ -271,24 +261,20 @@ async def bots__send_message(server_id, bot_name: str, edit_to: tuple[int, int] 
             new_ver = state.get("new_version", False)
             restarted = state.get("restarted", False)
 
-            # ===== Формируем сообщение =====
+            # Формируем блок сообщения для этого бота
             bot_lines = [f"*🤖 {escape_markdown(bot_name)} — {srv_name}*"]
-
             if not success:
                 bot_lines.append("❌ Бот недоступен")
             else:
                 bot_lines.append("✅ Бот работает нормально")
-
             if new_ver:
                 bot_lines.append(f"⬆️ Версия изменена на `{escape_markdown(version)}`")
             else:
                 bot_lines.append(f"📦 Версия: `{escape_markdown(version)}`")
-
             if restarted:
                 bot_lines.append(f"🔁 Бот был перезапущен\n🕒 Аптайм: `{escape_markdown(uptime)}`")
             else:
                 bot_lines.append(f"🕒 Аптайм: `{escape_markdown(uptime)}`")
-
             block_msg = "\n".join(bot_lines)
             parts.append(block_msg)
 
@@ -315,30 +301,95 @@ async def bots__send_message(server_id, bot_name: str, edit_to: tuple[int, int] 
         await b.send_message(chat_id=TG_ID, text=msg, parse_mode="MarkdownV2")
 
     except Exception as e:
-        logger.error(f"[{server_id}] bots__send_message failed -> {e}")
+        logger.error(f"bots__send_message failed -> {e}")
 
-# Разовый прогон мониторинга ботов по серверу (заглушка)
+# Автоматический мониторинг БОТОВ (циклически)
 async def bots__updates__auto_monitoring(server_id: str):
     logger = logging.getLogger(server_id)
-    data = await bots__fetch_data(server_id)
-    notify = await bots__analyzer(server_id, data)
+    interval = int(BOTS_MONITOR["interval"])
+    bots_cfg = BOTS_MONITOR.get("bots", {}).get(server_id, {})
+    while True:
+        try:
+            data = await bots__fetch_data(server_id)
+            if not data:
+                logger.warning(f"[{server_id}] BOTS: нет данных (fetch failed)")
+                await asyncio.sleep(interval)
+                continue
+            notify, bots_to_notify = await bots__analyzer(server_id, data)
+            if notify and bots_to_notify:
+                for bot_name in bots_to_notify:
+                    await bots__send_message(server_id, bot_name)
+            # Логирование состояния всех ботов текущего сервера
+            for bot_name in bots_cfg.keys():
+                state = BOTS_STATE.get(bot_name, {})
+                success = state.get("success")
+                version = state.get("version", "")
+                uptime = state.get("uptime", "")
+                msg = f"[{bot_name}]: success={success}, version={version}, uptime={uptime}"
+                if notify:
+                    logger.warning(msg)
+                else:
+                    logger.info(msg)
+        except Exception as e:
+            logger.error(f"[{server_id}] bots__updates__auto_monitoring failed -> {e}")
+        await asyncio.sleep(interval)
 
-    bots_cfg = BOTS_MONITOR["bots"].get(server_id, {})
-    for bot_name in bots_cfg.keys():
-        state = BOTS_STATE.get(bot_name, {})
-        success = state.get("success")
-        version = state.get("version", "")
-        uptime = state.get("uptime", "")
-        msg = f"[{bot_name}]: success={success}, version={version}, uptime={uptime}"
+# Ручной запрос БОТОВ по кнопке (одноразовый)
+async def bots__manual_button(server_id, bot_name):
+    logger = logging.getLogger("global_monitoring") if server_id == "ALL" else logging.getLogger(server_id)
+    try:
+        try:
+            b = bot
+            if b is None:
+                logger.error("Bot instance is not set. Call set_bot() from bot.py first.")
+                edit_to = None
+            else:
+                placeholder = await b.send_message(
+                    chat_id=TG_ID,
+                    text="⏳ Ожидание данных",
+                    parse_mode="MarkdownV2",
+                )
+                edit_to = (placeholder.chat.id, placeholder.message_id)
+        except Exception as e:
+            logger.warning(f"bots__manual_button: placeholder send failed -> {e}")
+            edit_to = None
 
-        if notify:
-            logger.warning(msg)
+        # ===== все боты =====
+        if bot_name == "ALL":
+            bot_names = []
+            for bots in BOTS_MONITOR["bots"].values():
+                bot_names.extend(bots.keys())
+        # ===== один бот =====
         else:
-            logger.info(msg)
+            bot_names = [bot_name]
+        bot_names = list(set(bot_names))
 
+        servers_to_update = set()
+        bot_to_server = {}
+        for sid, bots in BOTS_MONITOR["bots"].items():
+            for bname in bots.keys():
+                if bname in bot_names:
+                    servers_to_update.add(sid)
+                    bot_to_server[bname] = sid
 
+        any_data = False
+        for sid in servers_to_update:
+            data = await bots__fetch_data(sid)
+            if data:
+                await bots__analyzer(sid, data)
+                any_data = True
+            else:
+                logger.warning(f"[{sid}] ❌ Не удалось получить данные о ботах для ручного запроса")
 
+        if not any_data:
+            logger.warning("❌ Ручной запрос BOTS: ни по одному серверу данных нет")
+            return
 
+        # После обновления состояний отправляем одно сообщение по всем bot_names
+        await bots__send_message(bot_names, edit_to=edit_to)
+
+    except Exception as e:
+        logger.error(f"[{server_id}] bots__manual_button failed -> {e}")
 
 # ===== CPU/RAM =====
 # Глобальное состояние CPU/RAM для всех серверов
