@@ -4,6 +4,7 @@
   - Обрабатывает команды и callback-запросы.
   - Запускает мониторинг серверов и сайтов.
   - Ведёт собственный лог (bot.log) и access-лог (access.log).
+  - Добавлен отдельный формат логирования для консоли с указанием имени сервера.
 """
 
 import os
@@ -22,7 +23,7 @@ from monitoring import monitor, monitor_sites, set_bot
 from handlers import handle_command_servers, handle_callback_server
 from logs_report import handle_logs_command
 
-BOT_VERSION = "2.2.0"
+BOT_VERSION = "2.1.1"
 start_time = time.time()
 
 # ===== 🔧 Логирование =====
@@ -32,9 +33,15 @@ os.makedirs("logs/monitoring", exist_ok=True)
 
 log_formatter = logging.Formatter("%(asctime)s [%(levelname)s] %(message)s")
 
+# Форматтер для консоли с указанием имени сервера
+console_formatter = logging.Formatter(
+    "%(asctime)s [%(levelname)s] [%(name)s] %(message)s",
+    datefmt="%H:%M:%S"
+)
+
 # Общий консольный вывод
 console_handler = logging.StreamHandler()
-console_handler.setFormatter(log_formatter)
+console_handler.setFormatter(console_formatter)
 
 # --- Логгер бота ---
 bot_logger = logging.getLogger("bot")

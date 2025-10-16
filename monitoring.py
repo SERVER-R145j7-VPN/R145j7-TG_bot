@@ -150,9 +150,9 @@ async def bots__fetch_data(server_id):
                     data = await resp.json()
                     return data
                 else:
-                    logger.warning(f"[{server_id}] ❌ Ошибка при запросе ботов: {resp.status}")
+                    logger.warning(f"❌ Ошибка при запросе ботов: {resp.status}")
     except Exception as e:
-        logger.error(f"[{server_id}] ❌ Ошибка при подключении к API ботов: {e}")
+        logger.error(f"❌ Ошибка при подключении к API ботов: {e}")
 
     return {}
 
@@ -171,7 +171,7 @@ async def bots__analyzer(server_id, data):
             return (0, 0, 0, 0, 0)
     try:
         if not data:
-            logger.warning(f"[{server_id}] bots__analyzer: пустые данные")
+            logger.warning(f"bots__analyzer: пустые данные")
             return False, []
 
         notify = False
@@ -194,7 +194,7 @@ async def bots__analyzer(server_id, data):
                         break
 
                 if not bot_name:
-                    logger.warning(f"[{server_id}] неизвестный бот на порту {port}")
+                    logger.warning(f"неизвестный бот на порту {port}")
                     continue
 
                 prev_state = BOTS_STATE.get(bot_name, {})
@@ -233,12 +233,12 @@ async def bots__analyzer(server_id, data):
                 # Флаги new_version и restarted уже выставлены выше
 
             except Exception as e:
-                logger.error(f"[{server_id}] bots__analyzer: ошибка при обработке бота на порту {port} -> {e}")
+                logger.error(f"bots__analyzer: ошибка при обработке бота на порту {port} -> {e}")
 
         return notify, bots_to_notify
 
     except Exception as e:
-        logger.error(f"[{server_id}] bots__analyzer failed -> {e}")
+        logger.error(f"bots__analyzer failed -> {e}")
         return False, []
 
 # Формирование и отправка сообщения в Telegram (группировка по списку ботов)
@@ -318,7 +318,7 @@ async def bots__updates__auto_monitoring(server_id: str):
         try:
             data = await bots__fetch_data(server_id)
             if not data:
-                logger.warning(f"[{server_id}] BOTS: нет данных (fetch failed)")
+                logger.warning(f"BOTS: нет данных (fetch failed)")
                 await asyncio.sleep(interval)
                 continue
             notify, bots_to_notify = await bots__analyzer(server_id, data)
@@ -337,7 +337,7 @@ async def bots__updates__auto_monitoring(server_id: str):
                 else:
                     logger.info(msg)
         except Exception as e:
-            logger.error(f"[{server_id}] bots__updates__auto_monitoring failed -> {e}")
+            logger.error(f"bots__updates__auto_monitoring failed -> {e}")
         await asyncio.sleep(interval)
 
 # Ручной запрос БОТОВ по кнопке (одноразовый)
@@ -392,7 +392,7 @@ async def bots__manual_button(bot_name):
                 await bots__analyzer(sid, data)
                 any_data = True
             else:
-                logger.warning(f"[{sid}] ❌ Не удалось получить данные о ботах для ручного запроса")
+                logger.warning(f"❌ Не удалось получить данные о ботах для ручного запроса")
 
         if not any_data:
             logger.warning("❌ Ручной запрос BOTS: ни по одному серверу данных нет")
@@ -402,7 +402,7 @@ async def bots__manual_button(bot_name):
         await bots__send_message(bot_names, edit_to=edit_to)
 
     except Exception as e:
-        logger.error(f"[{server_id}] bots__manual_button failed -> {e}")
+        logger.error(f"bots__manual_button failed -> {e}")
 
 # ===== CPU/RAM =====
 # Глобальное состояние CPU/RAM для всех серверов
@@ -428,9 +428,9 @@ async def cpu_ram__fetch_data(server_id):
                 if resp.status == 200:
                     return await resp.json()
                 else:
-                    logger.warning(f"[{server_id}] ❌ Неверный статус ответа для CPU/RAM: {resp.status}")
+                    logger.warning(f"❌ Неверный статус ответа для CPU/RAM: {resp.status}")
     except Exception as e:
-        logger.error(f"[{server_id}] ❌ Ошибка при запросе CPU/RAM: {e}")
+        logger.error(f"❌ Ошибка при запросе CPU/RAM: {e}")
 
     return None
 
@@ -493,7 +493,7 @@ async def cpu_ram__analizer(server_id, data):
         return interval, notify
     
     except Exception as e:
-        logger.error(f"[{server_id}] cpu_ram__analizer:failed -> {e}")
+        logger.error(f"cpu_ram__analizer:failed -> {e}")
         interval = intervals[STATUS[st["status"]]["interval_key"]]
         return interval, False
 
@@ -601,7 +601,7 @@ async def cpu_ram__auto_monitoring(server_id):
                 logger.warning(log_line)
 
         except Exception as e:
-            logger.error(f"[{server_id}] cpu_ram__auto_monitoring failed -> {e}")
+            logger.error(f"cpu_ram__auto_monitoring failed -> {e}")
             interval = SERVERS[server_id]["cpu_ram"]["interval"][STATUS[CPU_STATE[server_id]["status"]]["interval_key"]]
         await asyncio.sleep(interval)
 
@@ -628,7 +628,7 @@ async def cpu_ram__manual_button(server_id):
                 if data:
                     data_map[sid] = data
                 else:
-                    logger.warning(f"[{sid}] ❌ Не удалось получить CPU/RAM для ручного запроса")
+                    logger.warning(f"❌ Не удалось получить CPU/RAM для ручного запроса")
             if data_map:
                 await cpu_ram__send_message(data_map, edit_to=edit_to)
             else:
@@ -640,10 +640,10 @@ async def cpu_ram__manual_button(server_id):
         if data:
             await cpu_ram__send_message({server_id: data}, edit_to=edit_to)
         else:
-            logger.warning(f"[{server_id}] ❌ Ручной запрос CPU/RAM: данных нет")
+            logger.warning(f"❌ Ручной запрос CPU/RAM: данных нет")
 
     except Exception as e:
-        logger.error(f"[{server_id}] cpu_ram__manual_button failed -> {e}")
+        logger.error(f"cpu_ram__manual_button failed -> {e}")
 
 # ===== SSD =====
 # Глобальное состояние DISK для всех серверов
@@ -663,9 +663,9 @@ async def disk__fetch_data(server_id):
                     data = await resp.json()
                     return float(data["disk_percent"])
                 else:
-                    logger.warning(f"[{server_id}] ❌ Неверный статус ответа для DISK: {resp.status}")
+                    logger.warning(f"❌ Неверный статус ответа для DISK: {resp.status}")
     except Exception as e:
-        logger.error(f"[{server_id}] ❌ Ошибка при запросе DISK: {e}")
+        logger.error(f"❌ Ошибка при запросе DISK: {e}")
 
     return None
 
@@ -692,7 +692,7 @@ async def disk__analyzer(server_id, data):
         return False
 
     except Exception as e:
-        logger.error(f"[{server_id}] disk__analyzer failed -> {e}")
+        logger.error(f"disk__analyzer failed -> {e}")
         return False
 
 # Формирование и отправка сообщения в Telegram
@@ -782,7 +782,7 @@ async def disk__auto_monitoring(server_id):
                 logger.info(log_line)
 
         except Exception as e:
-            logger.error(f"[{server_id}] disk__auto_monitoring failed -> {e}")
+            logger.error(f"disk__auto_monitoring failed -> {e}")
         await asyncio.sleep(interval)
 
 # Ручной запрос DISK по кнопке (одноразовый)
@@ -809,7 +809,7 @@ async def disk__manual_button(server_id):
                 if data is not None:
                     data_map[sid] = data
                 else:
-                    logger.warning(f"[{sid}] ❌ Не удалось получить данные о диске для ручного запроса")
+                    logger.warning(f"❌ Не удалось получить данные о диске для ручного запроса")
             if data_map:
                 await disk__send_message(data_map, edit_to=edit_to)
             else:
@@ -821,10 +821,10 @@ async def disk__manual_button(server_id):
         if data is not None:
             await disk__send_message({server_id: data}, edit_to=edit_to)
         else:
-            logger.warning(f"[{server_id}] ❌ Ручной запрос DISK: данных нет")
+            logger.warning(f"❌ Ручной запрос DISK: данных нет")
 
     except Exception as e:
-        logger.error(f"[{server_id}] disk__manual_button failed -> {e}")
+        logger.error(f"disk__manual_button failed -> {e}")
 
 # ===== PROCESSES =====
 # Глобальное состояние PROCESSES для всех серверов
@@ -852,9 +852,9 @@ async def processes__fetch_data(server_id):
                             state  = "failed" if "failed" in (active, sub) else "ok"
                             results.append({"name": name, "source": "SCT", "state": state})
                     else:
-                        logger.warning(f"[{server_id}] ❌ Неверный статус ответа для systemctl: {resp.status}")
+                        logger.warning(f"❌ Неверный статус ответа для systemctl: {resp.status}")
             except Exception as e:
-                logger.error(f"[{server_id}] ❌ Ошибка при запросе systemctl -> {e}")
+                logger.error(f"❌ Ошибка при запросе systemctl -> {e}")
 
             # ===== pm2 =====
             url_pm2 = f"http://{srv['ip']}:{srv['monitoring_port']}/processes_pm2?token={srv['token']}"
@@ -868,12 +868,12 @@ async def processes__fetch_data(server_id):
                             state  = "failed" if status == "failed" else "ok"
                             results.append({"name": name, "source": "PM2", "state": state})
                     else:
-                        logger.warning(f"[{server_id}] ❌ Неверный статус ответа для pm2: {resp.status}")
+                        logger.warning(f"❌ Неверный статус ответа для pm2: {resp.status}")
             except Exception as e:
-                logger.error(f"[{server_id}] ❌ Ошибка при запросе pm2 -> {e}")
+                logger.error(f"❌ Ошибка при запросе pm2 -> {e}")
 
     except Exception as e:
-        logger.error(f"[{server_id}] ❌ processes__fetch_data global error -> {e}")
+        logger.error(f"❌ processes__fetch_data global error -> {e}")
 
     return results
 
@@ -927,7 +927,7 @@ async def processes__analyzer(server_id, data):
         return changed
 
     except Exception as e:
-        logger.error(f"[{server_id}] processes__analyzer failed -> {e}")
+        logger.error(f"processes__analyzer failed -> {e}")
         return False
 
 # Формирование и отправка сообщения в Telegram
@@ -953,9 +953,9 @@ async def processes__send_message(server_id, edit_to: tuple[int, int] | None = N
                     elif src == "PM2":
                         failed_bkt["PM2"].append(fname)
                     else:
-                        logger.error(f"[{sid}] processes__send_message: unknown failed source '{src}' for '{fname}'")
+                        logger.error(f"processes__send_message: unknown failed source '{src}' for '{fname}'")
                 else:
-                    logger.error(f"[{sid}] processes__send_message: failed item without source: {item!r}")
+                    logger.error(f"processes__send_message: failed item without source: {item!r}")
 
             # ---- miners (ожидаем список dict{name,source}) ----
             miners_raw = state.get("miners", []) or []
@@ -968,7 +968,7 @@ async def processes__send_message(server_id, edit_to: tuple[int, int] | None = N
                 elif src == "PM2":
                     miners_bkt["PM2"].append(mname)
                 else:
-                    logger.error(f"[{sid}] processes__send_message: unknown miner source '{src}' for '{mname}'")
+                    logger.error(f"processes__send_message: unknown miner source '{src}' for '{mname}'")
 
             any_failed = bool(failed_bkt["SCT"] or failed_bkt["PM2"])
             any_miners = bool(miners_bkt["SCT"] or miners_bkt["PM2"])
@@ -1014,7 +1014,7 @@ async def processes__send_message(server_id, edit_to: tuple[int, int] | None = N
         await b.send_message(chat_id=TG_ID, text=msg, parse_mode="MarkdownV2")
 
     except Exception as e:
-        logger.error(f"[{server_id}] processes__send_message failed -> {e}")
+        logger.error(f"processes__send_message failed -> {e}")
 
 # Автоматический мониторинг (циклически)
 async def processes__auto_monitoring(server_id):
@@ -1059,7 +1059,7 @@ async def processes__auto_monitoring(server_id):
                 logger.info("PROCESSES MINERS: none")
 
         except Exception as e:
-            logger.error(f"[{server_id}] processes__auto_monitoring failed -> {e}")
+            logger.error(f"processes__auto_monitoring failed -> {e}")
         await asyncio.sleep(interval)
 
 # Ручной запрос PROCESSES по кнопке (одноразовый)
@@ -1091,7 +1091,7 @@ async def processes__manual_button(server_id):
                     await processes__analyzer(sid, data)
                     any_data = True
                 else:
-                    logger.warning(f"[{sid}] ❌ Не удалось получить данные о процессах для ручного запроса")
+                    logger.warning(f"❌ Не удалось получить данные о процессах для ручного запроса")
             if any_data:
                 await processes__send_message("ALL", edit_to=edit_to)
             else:
@@ -1104,10 +1104,10 @@ async def processes__manual_button(server_id):
             await processes__analyzer(server_id, data)
             await processes__send_message(server_id, edit_to=edit_to)
         else:
-            logger.warning(f"[{server_id}] ❌ Ручной запрос PROCESS: данных нет")
+            logger.warning(f"❌ Ручной запрос PROCESS: данных нет")
 
     except Exception as e:
-        logger.error(f"[{server_id}] processes__manual_button failed -> {e}")
+        logger.error(f"processes__manual_button failed -> {e}")
 
 # ===== UPDATES =====
 # Глобальное состояние UPDATES для всех серверов
@@ -1127,9 +1127,9 @@ async def updates__fetch_data(server_id):
                     data = await resp.json()
                     return data["updates"]
                 else:
-                    logger.warning(f"[{server_id}] ❌ Неверный статус ответа для UPDATES: {resp.status}")
+                    logger.warning(f"❌ Неверный статус ответа для UPDATES: {resp.status}")
     except Exception as e:
-        logger.error(f"[{server_id}] ❌ Ошибка при запросе UPDATES: {e}")
+        logger.error(f"❌ Ошибка при запросе UPDATES: {e}")
 
     return None
 
@@ -1150,7 +1150,7 @@ async def updates__analyzer(server_id, data):
         return False
 
     except Exception as e:
-        logger.error(f"[{server_id}] updates__analyzer failed -> {e}")
+        logger.error(f"updates__analyzer failed -> {e}")
         return False
 
 # Формирование и отправка сообщения в Telegram
@@ -1192,7 +1192,7 @@ async def updates__send_message(server_id, edit_to: tuple[int, int] | None = Non
         await b.send_message(chat_id=TG_ID, text=msg, parse_mode="MarkdownV2")
 
     except Exception as e:
-        logger.error(f"[{server_id}] updates__send_message failed -> {e}")
+        logger.error(f"updates__send_message failed -> {e}")
 
 # Автоматический мониторинг (циклически)
 async def updates__auto_monitoring(server_id):
@@ -1212,7 +1212,7 @@ async def updates__auto_monitoring(server_id):
                 logger.info("UPDATES: none")    
 
         except Exception as e:
-            logger.error(f"[{server_id}] updates__auto_monitoring failed -> {e}")
+            logger.error(f"updates__auto_monitoring failed -> {e}")
         await asyncio.sleep(interval)
 
 # Ручной запрос UPDATES по кнопке (одноразовый)
@@ -1245,7 +1245,7 @@ async def updates__manual_button(server_id):
                     await updates__analyzer(sid, data)
                     any_data = True
                 else:
-                    logger.warning(f"[{sid}] ❌ Не удалось получить данные об обновлениях для ручного запроса")
+                    logger.warning(f"❌ Не удалось получить данные об обновлениях для ручного запроса")
             if any_data:
                 await updates__send_message("ALL", edit_to=edit_to)
             else:
@@ -1258,10 +1258,10 @@ async def updates__manual_button(server_id):
             await updates__analyzer(server_id, data)
             await updates__send_message(server_id, edit_to=edit_to)
         else:
-            logger.warning(f"[{server_id}] ❌ Ручной запрос UPDATES: данных нет")
+            logger.warning(f"❌ Ручной запрос UPDATES: данных нет")
 
     except Exception as e:
-        logger.error(f"[{server_id}] updates__manual_button failed -> {e}")
+        logger.error(f"updates__manual_button failed -> {e}")
 
 # ===== BACKUPS =====
 #  Запрос данных о BACKUPS с API сервера
@@ -1277,9 +1277,9 @@ async def backups__fetch_data(server_id):
                 if resp.status == 200:
                     return await resp.json()
                 else:
-                    logger.warning(f"[{server_id}] ❌ Неверный статус ответа для BACKUP: {resp.status}")
+                    logger.warning(f"❌ Неверный статус ответа для BACKUP: {resp.status}")
     except Exception as e:
-        logger.error(f"[{server_id}] ❌ Ошибка при запросе BACKUP: {e}")
+        logger.error(f"❌ Ошибка при запросе BACKUP: {e}")
 
     return None
 
@@ -1288,14 +1288,14 @@ async def backups__analyzer(server_id, data):
     logger = logging.getLogger(server_id)
     try:
         if not data:
-            logger.warning(f"[{server_id}] backups__analyzer: пустой ответ")
+            logger.warning(f"backups__analyzer: пустой ответ")
             return False
 
         status_ok = str(data.get("status", "")).lower() == "success"
         return not status_ok
 
     except Exception as e:
-        logger.error(f"[{server_id}] backups__analyzer failed -> {e}")
+        logger.error(f"backups__analyzer failed -> {e}")
         return False
 
 # Формирование и отправка сообщения в Telegram
@@ -1411,7 +1411,7 @@ async def backups__send_message(server_id, data, edit_to: tuple[int, int] | None
         await b.send_message(chat_id=TG_ID, text=msg, parse_mode="MarkdownV2")
 
     except Exception as e:
-        logger.error(f"[{server_id}] backups__send_message failed -> {e}")
+        logger.error(f"backups__send_message failed -> {e}")
 
 # Автоматический мониторинг (циклически)
 async def backups__auto_monitoring(server_id):
@@ -1420,7 +1420,7 @@ async def backups__auto_monitoring(server_id):
         time_str = SERVERS[server_id]["backups"]["time"]
         hour, minute = map(int, time_str.split(":"))
     except Exception as e:
-        logger.error(f"[{server_id}] backups__auto_monitoring: invalid time config -> {e}")
+        logger.error(f"backups__auto_monitoring: invalid time config -> {e}")
         return
 
     while True:
@@ -1445,7 +1445,7 @@ async def backups__auto_monitoring(server_id):
             logger.info(f"BACKUPS: {data}")
 
         except Exception as e:
-            logger.error(f"[{server_id}] backups__auto_monitoring failed -> {e}")
+            logger.error(f"backups__auto_monitoring failed -> {e}")
 
 # Ручной запрос по кнопке (одноразовый)
 async def backups__manual_button(server_id):
@@ -1480,7 +1480,7 @@ async def backups__manual_button(server_id):
                     data_map[sid] = data
                     any_data = True
                 else:
-                    logger.warning(f"[{sid}] ❌ Не удалось получить данные о бэкапах для ручного запроса")
+                    logger.warning(f"❌ Не удалось получить данные о бэкапах для ручного запроса")
             if any_data:
                 await backups__send_message("ALL", data_map, edit_to=edit_to)
             else:
@@ -1493,10 +1493,10 @@ async def backups__manual_button(server_id):
             await backups__analyzer(server_id, data)
             await backups__send_message(server_id, data, edit_to=edit_to)
         else:
-            logger.warning(f"[{server_id}] ❌ Ручной запрос BACKUPS: данных нет")
+            logger.warning(f"❌ Ручной запрос BACKUPS: данных нет")
 
     except Exception as e:
-        logger.error(f"[{server_id}] backups__manual_button failed -> {e}")
+        logger.error(f"backups__manual_button failed -> {e}")
 
 # ===== Основной код одного сервера =====
 async def monitor(server_id: str):
