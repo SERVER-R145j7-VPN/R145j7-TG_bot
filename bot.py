@@ -1,138 +1,33 @@
 """
-• Telegram-бот для управления и мониторинга
-  - Запускается через aiogram.
-  - Обрабатывает команды и callback-запросы.
-  - Запускает мониторинг серверов и сайтов.
-  - Ведёт собственный лог (bot.log) и access-лог (access.log).
-  - Добавлен отдельный формат логирования для консоли с указанием имени сервера.
+• Telegram-бот для мониторинга и управления серверами
+  - Работает на основе библиотеки aiogram.
+  - Использует централизованную систему логирования из utils.setup_loggers().
+  - Запускает фоновые задачи мониторинга серверов и сайтов.
+  - Обрабатывает команды, кнопки и запросы пользователей.
+  - Ведёт системный лог (bot.log) и лог доступа (access.log).
 """
 
-import os
 import time
 import asyncio
-import logging
 from typing import Union
-from logging.handlers import TimedRotatingFileHandler
 from aiogram import Bot, Dispatcher
 from aiogram.types import Message, CallbackQuery
 from aiogram.filters import Command
 from aiogram.client.default import DefaultBotProperties
 from contextlib import suppress
 from config import BOT_TOKEN, SERVERS, TG_ID
+from utils import setup_loggers
 from monitoring import monitor, monitor_sites, set_bot
 from handlers import handle_command_servers, handle_callback_server
 from logs_report import handle_logs_command
 
-BOT_VERSION = "2.1.1"
+BOT_VERSION = "2.3.0"
 start_time = time.time()
 
-# ===== 🔧 Логирование =====
-# Создание папок для логов
-os.makedirs("logs/bot", exist_ok=True)
-os.makedirs("logs/monitoring", exist_ok=True)
-
-log_formatter = logging.Formatter("%(asctime)s [%(levelname)s] %(message)s")
-
-# Форматтер для консоли с указанием имени сервера
-console_formatter = logging.Formatter(
-    "%(asctime)s [%(levelname)s] [%(name)s] %(message)s",
-    datefmt="%H:%M:%S"
-)
-
-# Общий консольный вывод
-console_handler = logging.StreamHandler()
-console_handler.setFormatter(console_formatter)
-
-# --- Логгер бота ---
-bot_logger = logging.getLogger("bot")
-bot_logger.setLevel(logging.INFO)
-bot_logger.propagate = False
-_bot_path = os.path.abspath("logs/bot/bot.log")
-if not any(getattr(h, "baseFilename", None) == _bot_path for h in bot_logger.handlers):
-    bot_file_handler = TimedRotatingFileHandler(
-        filename=_bot_path,
-        when="midnight",
-        interval=1,
-        backupCount=7,
-        encoding="utf-8",
-    )
-    bot_file_handler.setFormatter(log_formatter)
-    bot_logger.addHandler(bot_file_handler)
-if console_handler not in bot_logger.handlers:
-    bot_logger.addHandler(console_handler)
-
-# --- Логгер доступа ---
-access_logger = logging.getLogger("access")
-access_logger.setLevel(logging.WARNING)
-access_logger.propagate = False
-_access_path = os.path.abspath("logs/bot/access.log")
-if not any(getattr(h, "baseFilename", None) == _access_path for h in access_logger.handlers):
-    access_file_handler = TimedRotatingFileHandler(
-        filename=_access_path,
-        when="midnight",
-        interval=1,
-        backupCount=7,
-        encoding="utf-8",
-    )
-    access_file_handler.setFormatter(log_formatter)
-    access_logger.addHandler(access_file_handler)
-if console_handler not in access_logger.handlers:
-    access_logger.addHandler(console_handler)
-
-# --- Логгер глобального мониторинга ---
-global_logger = logging.getLogger("global_monitoring")
-global_logger.setLevel(logging.INFO)
-global_logger.propagate = False
-_global_path = os.path.abspath("logs/monitoring/global_monitoring.log")
-if not any(getattr(h, "baseFilename", None) == _global_path for h in global_logger.handlers):
-    global_file_handler = TimedRotatingFileHandler(
-        filename=_global_path,
-        when="midnight",
-        interval=1,
-        backupCount=7,
-        encoding="utf-8",
-    )
-    global_file_handler.setFormatter(log_formatter)
-    global_logger.addHandler(global_file_handler)
-if console_handler not in global_logger.handlers:
-    global_logger.addHandler(console_handler)
-
-# --- Логгер сайтов ---
-sites_logger = logging.getLogger("sites_monitoring")
-sites_logger.setLevel(logging.INFO)
-sites_logger.propagate = False
-_sites_path = os.path.abspath("logs/monitoring/sites_monitoring.log")
-if not any(getattr(h, "baseFilename", None) == _sites_path for h in sites_logger.handlers):
-    sites_file_handler = TimedRotatingFileHandler(
-        filename=_sites_path,
-        when="midnight",
-        interval=1,
-        backupCount=7,
-        encoding="utf-8",
-    )
-    sites_file_handler.setFormatter(log_formatter)
-    sites_logger.addHandler(sites_file_handler)
-if console_handler not in sites_logger.handlers:
-    sites_logger.addHandler(console_handler)
-
-# --- Логгеры серверов из конфига ---
-for sid, cfg in SERVERS.items():
-    srv_logger = logging.getLogger(sid)
-    srv_logger.setLevel(logging.INFO)
-    srv_logger.propagate = False
-    _srv_path = os.path.abspath(f"logs/monitoring/{sid}.log")
-    if not any(getattr(h, "baseFilename", None) == _srv_path for h in srv_logger.handlers):
-        srv_file_handler = TimedRotatingFileHandler(
-            filename=_srv_path,
-            when="midnight",
-            interval=1,
-            backupCount=7,
-            encoding="utf-8",
-        )
-        srv_file_handler.setFormatter(log_formatter)
-        srv_logger.addHandler(srv_file_handler)
-    if console_handler not in srv_logger.handlers:
-        srv_logger.addHandler(console_handler)
+# === Логгеры проекта ===
+loggers = setup_loggers(SERVERS)
+bot_logger = loggers["bot"]
+access_logger = loggers["access"]
 
 # ===== 🛠️ Функции и хэндлеры =====
 # Форматирование времени работы бота
