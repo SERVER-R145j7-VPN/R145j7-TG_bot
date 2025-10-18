@@ -6,14 +6,15 @@ utils.py — вспомогательный модуль проекта.
 import os
 import logging
 from logging.handlers import TimedRotatingFileHandler
+from config import LOG_PATHS, LOG_DIRS
 
 """
 Создаёт и настраивает все логгеры проекта.
 Логи делятся на категории: bot, access, database, monitoring, sites и индивидуальные для серверов.
 """
 def setup_loggers(servers: dict):
-    os.makedirs("logs/bot", exist_ok=True)
-    os.makedirs("logs/monitoring", exist_ok=True)
+    for directory in LOG_DIRS:
+        os.makedirs(directory, exist_ok=True)
 
     log_formatter = logging.Formatter("%(asctime)s [%(levelname)s] %(message)s")
     console_formatter = logging.Formatter(
@@ -43,15 +44,16 @@ def setup_loggers(servers: dict):
         loggers[name] = logger
 
     # базовые логи
-    _create_logger("bot", "logs/bot/bot.log")
-    _create_logger("access", "logs/bot/access.log", logging.WARNING)
-    _create_logger("database", "logs/bot/database.log")
-    _create_logger("global_monitoring", "logs/monitoring/global_monitoring.log")
-    _create_logger("sites_monitoring", "logs/monitoring/sites_monitoring.log")
+    _create_logger("bot", LOG_PATHS["bot"])
+    _create_logger("access", LOG_PATHS["access"], logging.WARNING)
+    _create_logger("database", LOG_PATHS["database"])
+    _create_logger("global_monitoring", LOG_PATHS["global_monitoring"])
+    _create_logger("sites_monitoring", LOG_PATHS["sites_monitoring"])
 
     # логи серверов
     for sid in servers.keys():
-        _create_logger(sid, f"logs/monitoring/{sid}.log")
+        server_log_path = os.path.join(LOG_PATHS["servers_dir"], f"{sid}.log")
+        _create_logger(sid, server_log_path)
 
     return loggers
 
